@@ -21,6 +21,8 @@ fn ipc() -> Builder<tauri::Wry> {
             commands::restore_batch,
             commands::purge_batch,
             commands::create_restore_point,
+            commands::list_restore_points,
+            commands::open_system_restore,
             commands::compute_sizes,
             commands::open_install_folder,
             commands::save_export

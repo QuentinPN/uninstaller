@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tauri::ipc::Channel;
 
-use crate::core::broker::{Client, Reply, Request, RestorePoint};
+use crate::core::broker::{Client, Reply, Request, RestorePoint, SystemPoint};
 use crate::core::inventory::{self, Program};
 use crate::core::quarantine::{self, BatchAction, BatchFailure, BatchSummary};
 use crate::core::settings::{self, Settings};
@@ -157,14 +157,47 @@ const RESTORE_POINT_NAME: &str = "Uninstaller : point créé à la demande";
 #[tauri::command]
 #[specta::specta]
 pub async fn create_restore_point() -> Result<RestorePoint, ElevationFailure> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let request = Request::CreateRestorePoint {
-            description: RESTORE_POINT_NAME.into(),
-        };
-        match elevated(&request)? {
-            Reply::RestorePoint(point) => Ok(point),
-            _ => Err(ElevationFailure::Failed),
-        }
+    let request = Request::CreateRestorePoint {
+        description: RESTORE_POINT_NAME.into(),
+    };
+    ask_broker(request, |reply| match reply {
+        Reply::RestorePoint(point) => Some(point),
+        _ => None,
+    })
+    .await
+}
+
+/// The restore points Windows keeps, newest first. Listing them needs administrator
+/// rights, so the UI asks only when the user does.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_restore_points() -> Result<Vec<SystemPoint>, ElevationFailure> {
+    ask_broker(Request::ListRestorePoints, |reply| match reply {
+        Reply::RestorePoints(points) => points,
+        _ => None,
+    })
+    .await
+}
+
+/// Opens Windows' System Restore wizard, which restores a point after its own
+/// confirmation.
+#[tauri::command]
+#[specta::specta]
+pub async fn open_system_restore() -> Result<(), ElevationFailure> {
+    ask_broker(Request::OpenSystemRestore, |reply| {
+        matches!(reply, Reply::Opened(true)).then_some(())
+    })
+    .await
+}
+
+/// Sends `request` to the elevated broker off the main thread; `read` picks the
+/// answer out of the reply, `None` being a failure.
+async fn ask_broker<T: Send + 'static>(
+    request: Request,
+    read: fn(Reply) -> Option<T>,
+) -> Result<T, ElevationFailure> {
+    tauri::async_runtime::spawn_blocking(move || {
+        read(elevated(&request)?).ok_or(ElevationFailure::Failed)
     })
     .await
     .map_err(|_| ElevationFailure::Failed)?

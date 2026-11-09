@@ -6,7 +6,9 @@ import {
   type BatchFailure,
   type BatchSummary,
   commands,
+  type ElevationFailure,
   PURGE_DAYS,
+  type SystemPoint,
 } from "../ipc/bindings";
 import EmptyState from "../ui/EmptyState.svelte";
 
@@ -22,9 +24,35 @@ let notice = $state<{ text: string; failed: boolean } | null>(null);
 let creatingPoint = $state(false);
 /** Null until the saved settings are read. */
 let purgeDays = $state<number | null>(null);
+/** Null until the user asks: listing them takes administrator rights. */
+let points = $state<SystemPoint[] | null>(null);
+let loadingPoints = $state(false);
+let openingRestore = $state(false);
 const totalKib = $derived(
   batches?.reduce((sum, batch) => sum + batch.sizeKib, 0) ?? 0,
 );
+/** Batches and restore points, newest first. */
+const entries = $derived(
+  [
+    ...(batches ?? []).map(
+      (batch) => ({ kind: "batch", at: batch.created, batch }) as const,
+    ),
+    ...(points ?? []).map(
+      (point) => ({ kind: "point", at: point.created, point }) as const,
+    ),
+  ].sort((a, b) => b.at - a.at),
+);
+
+/** A command that threw instead of answering, read as a plain failure. */
+const failedCall = () => ({ status: "error", error: "failed" }) as const;
+
+/** The notice for an elevated call that did not go through. */
+function elevationNotice(error: ElevationFailure, failedText: string) {
+  return {
+    text: error === "refused" ? t.point.refused : failedText,
+    failed: true,
+  };
+}
 
 function load() {
   failed = false;
@@ -53,9 +81,7 @@ async function act(
   busy = batch.name;
   confirming = null;
   notice = null;
-  const result = await run(batch.name).catch(
-    () => ({ status: "error", error: "failed" }) as const,
-  );
+  const result = await run(batch.name).catch(failedCall);
   notice =
     result.status === "ok"
       ? { text: done(batch.name), failed: false }
@@ -68,12 +94,35 @@ async function act(
 async function createPoint() {
   creatingPoint = true;
   notice = { text: t.creatingPoint, failed: false };
-  const result = await commands
-    .createRestorePoint()
-    .catch(() => ({ status: "error", error: "failed" }) as const);
+  const result = await commands.createRestorePoint().catch(failedCall);
   const outcome = result.status === "ok" ? result.data : result.error;
   notice = { text: t.point[outcome], failed: outcome !== "created" };
   creatingPoint = false;
+  // The broker's session is open now: no second prompt.
+  if (outcome === "created" && points !== null) loadPoints();
+}
+
+/** Lists restore points through the broker; the UAC prompt shows if none runs. */
+async function loadPoints() {
+  loadingPoints = true;
+  const result = await commands.listRestorePoints().catch(failedCall);
+  if (result.status === "ok") {
+    points = result.data;
+    if (!points.length) notice = { text: t.noPoints, failed: false };
+  } else {
+    notice = elevationNotice(result.error, t.pointsFailed);
+  }
+  loadingPoints = false;
+}
+
+/** Hands over to Windows' wizard, which restores after its own confirmation. */
+async function openRestore() {
+  openingRestore = true;
+  const result = await commands.openSystemRestore().catch(failedCall);
+  if (result.status === "error") {
+    notice = elevationNotice(result.error, t.openFailed);
+  }
+  openingRestore = false;
 }
 
 /** Moves keyboard focus to the safe choice when the confirmation opens. */
@@ -112,25 +161,50 @@ onMount(() => {
   </button>
 </header>
 
-{#if purgeDays !== null}
-  <label class="select-label setting" title={t.purgeHint}>
-    {t.purgeAfter}
-    <select bind:value={purgeDays} onchange={savePurgeDays}>
-      {#each PURGE_DAYS as days (days)}
-        <option value={days}>{t.days(days)}</option>
-      {/each}
-    </select>
-  </label>
-{/if}
+<div class="tools">
+  {#if purgeDays !== null}
+    <label class="select-label" title={t.purgeHint}>
+      {t.purgeAfter}
+      <select bind:value={purgeDays} onchange={savePurgeDays}>
+        {#each PURGE_DAYS as days (days)}
+          <option value={days}>{t.days(days)}</option>
+        {/each}
+      </select>
+    </label>
+  {/if}
+  {#if points === null}
+    <button class="action" disabled={loadingPoints} onclick={loadPoints}>
+      {loadingPoints ? t.loadingPoints : t.showPoints}
+    </button>
+  {/if}
+</div>
 
 {#if failed}
   <EmptyState title={t.error.title} text={t.error.text} onretry={load} />
-{:else if batches && !batches.length}
+{:else if batches && !entries.length}
   <EmptyState title={t.empty.title} text={t.empty.text} />
 {:else if batches}
-  <h2>{t.quarantine}</h2>
+  <h2>{t.timeline}</h2>
   <ul class="batches">
-    {#each batches as batch (batch.name)}
+    {#each entries as entry (entry.kind === "batch" ? entry.batch.name : `point ${entry.point.sequence}`)}
+      {#if entry.kind === "point"}
+        <li>
+          <div class="row">
+            <div class="lines">
+              <span class="name">{entry.point.description}</span>
+              <span class="meta">
+                {formatMoment(entry.point.created)} · {t.pointNumber(entry.point.sequence)}
+              </span>
+            </div>
+            <div class="buttons">
+              <button class="action" disabled={openingRestore} onclick={openRestore}>
+                {t.openRestore}
+              </button>
+            </div>
+          </div>
+        </li>
+      {:else}
+      {@const batch = entry.batch}
       {@const contents = t.contents(batch.files, batch.keys)}
       <li>
         <div class="row">
@@ -181,6 +255,7 @@ onMount(() => {
           </div>
         {/if}
       </li>
+      {/if}
     {/each}
   </ul>
 {/if}
@@ -212,7 +287,10 @@ onMount(() => {
     flex: none;
     margin-left: auto;
   }
-  .setting {
+  .tools {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
     margin-bottom: var(--space-4);
   }
   h2 {

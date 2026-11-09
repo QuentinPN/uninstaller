@@ -37,6 +37,10 @@ pub enum Request {
     /// Restores or purges the batch `name` of the quarantine, when the app was denied
     /// access. A name, never a path: the broker finds the batch itself.
     Batch { action: BatchAction, name: String },
+    /// The restore points Windows keeps, for the Backups timeline.
+    ListRestorePoints,
+    /// Opens Windows' System Restore wizard, where the user picks a point.
+    OpenSystemRestore,
 }
 
 /// The broker's answer to one `Request`.
@@ -48,7 +52,24 @@ pub enum Reply {
     },
     RestorePoint(RestorePoint),
     Batch(Result<(), BatchFailure>),
+    /// Newest first; `None` if Windows could not list them.
+    RestorePoints(Option<Vec<SystemPoint>>),
+    Opened(bool),
 }
+
+/// A restore point in the Backups timeline.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemPoint {
+    pub sequence: u32,
+    pub description: String,
+    /// Seconds since the Unix epoch.
+    pub created: u32,
+}
+
+/// At most this many points in a reply, so it stays well under `MAX_FRAME`; Windows
+/// rarely keeps more.
+const MAX_POINTS: usize = 32;
 
 /// What became of a `CreateRestorePoint`, also what the Backups screen shows.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Type)]
@@ -172,7 +193,71 @@ fn answer(request: Request) -> Reply {
                 .ok_or(BatchFailure::Missing)
                 .and_then(|root| Ok(action.run(&root, &name)?)),
         ),
+        Request::ListRestorePoints => Reply::RestorePoints(restore_points()),
+        Request::OpenSystemRestore => Reply::Opened(open_system_restore()),
     }
+}
+
+/// The points WMI lists, newest first; a point whose date cannot be read is left out.
+fn restore_points() -> Option<Vec<SystemPoint>> {
+    let mut points: Vec<_> = restore::list()
+        .ok()?
+        .into_iter()
+        .filter_map(|point| {
+            Some(SystemPoint {
+                created: u32::try_from(wmi_time(&point.created)?).ok()?,
+                sequence: point.sequence,
+                description: point.description,
+            })
+        })
+        .collect();
+    points.sort_by_key(|point| std::cmp::Reverse(point.sequence));
+    points.truncate(MAX_POINTS);
+    Some(points)
+}
+
+/// WMI's `yyyymmddHHMMSS.ffffff±UUU` (offset in minutes) to seconds since the Unix
+/// epoch.
+fn wmi_time(text: &str) -> Option<u64> {
+    let (b, sign) = (text.as_bytes(), text.get(21..22)?);
+    if text.len() != 25 || b[14] != b'.' || !matches!(sign, "+" | "-") {
+        return None;
+    }
+    let number = |range: std::ops::Range<usize>| -> Option<i64> {
+        let part = text.get(range)?;
+        part.bytes()
+            .all(|c| c.is_ascii_digit())
+            .then(|| part.parse().ok())?
+    };
+    let (year, month, day) = (number(0..4)?, number(4..6)?, number(6..8)?);
+    let (hour, minute, second) = (number(8..10)?, number(10..12)?, number(12..14)?);
+    let offset = number(22..25)? * if sign == "-" { -1 } else { 1 };
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 59
+    {
+        return None;
+    }
+    // Days since 1970-01-01 from a civil date (Howard Hinnant's algorithm).
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    let local = days * 86_400 + hour * 3_600 + minute * 60 + second;
+    u64::try_from(local - offset * 60).ok()
+}
+
+/// Starts `rstrui.exe`; it runs elevated as the broker does, so no second prompt.
+fn open_system_restore() -> bool {
+    std::env::var_os("SystemRoot").is_some_and(|windows| {
+        std::process::Command::new(std::path::Path::new(&windows).join(r"System32\rstrui.exe"))
+            .spawn()
+            .is_ok()
+    })
 }
 
 /// Creates the point, telling a skipped one by the last point's number, which Windows
@@ -279,6 +364,23 @@ fn invalid(why: &str) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wmi_times_read_as_utc() {
+        assert_eq!(wmi_time("19700101000000.000000+000"), Some(0));
+        assert_eq!(wmi_time("20240229123000.000000-000"), Some(1_709_209_800));
+        // Two hours ahead of UTC: the same instant two hours earlier on the clock.
+        assert_eq!(wmi_time("20240229143000.000000+120"), Some(1_709_209_800));
+        for bad in [
+            "",
+            "20241301000000.000000-000",
+            "2024022912300.0000000-000",
+            "20240229123000.000000*000",
+            "20240229123000.000000-0a0",
+        ] {
+            assert_eq!(wmi_time(bad), None, "{bad}");
+        }
+    }
     use std::io::Cursor;
 
     fn frame(json: &str) -> Vec<u8> {
@@ -440,6 +542,21 @@ mod tests {
             elevated_client().call(&request).expect("call"),
             Reply::Batch(Err(BatchFailure::Missing))
         );
+    }
+
+    /// Read only: lists the points and checks they come newest first. Accept the prompt.
+    #[test]
+    #[ignore = "administrateur : affiche l'invite UAC"]
+    fn elevated_broker_lists_restore_points() {
+        let Reply::RestorePoints(Some(points)) = elevated_client()
+            .call(&Request::ListRestorePoints)
+            .expect("call")
+        else {
+            panic!("no list");
+        };
+        assert!(points.windows(2).all(|p| p[0].sequence > p[1].sequence));
+        assert!(points.iter().all(|p| p.created > 1_600_000_000));
+        println!("{points:#?}");
     }
 
     /// Refuse the UAC prompt (« Non »): the app must tell it from other failures.

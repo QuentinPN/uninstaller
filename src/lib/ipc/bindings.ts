@@ -42,6 +42,16 @@ export const commands = {
 	/**  Creates a system restore point through the elevated broker (F12, SECURITY.md 4). */
 	createRestorePoint: () => typedError<RestorePoint, ElevationFailure>(__TAURI_INVOKE("create_restore_point")),
 	/**
+	 *  The restore points Windows keeps, newest first. Listing them needs administrator
+	 *  rights, so the UI asks only when the user does.
+	 */
+	listRestorePoints: () => typedError<SystemPoint[], ElevationFailure>(__TAURI_INVOKE("list_restore_points")),
+	/**
+	 *  Opens Windows' System Restore wizard, which restores a point after its own
+	 *  confirmation.
+	 */
+	openSystemRestore: () => typedError<null, ElevationFailure>(__TAURI_INVOKE("open_system_restore")),
+	/**
 	 *  Size on disk of every program with an install folder, sent in batches on `on_sizes`
 	 *  as folders finish (F1). Resolves once all are sent.
 	 */
@@ -225,6 +235,14 @@ export type Settings_Deserialize = {
 export type Settings_Serialize = {
 	/**  How long a quarantine batch stays restorable, one of `PURGE_DAYS`. */
 	purgeDays: number,
+};
+
+/**  A restore point in the Backups timeline. */
+export type SystemPoint = {
+	sequence: number,
+	description: string,
+	/**  Seconds since the Unix epoch. */
+	created: number,
 };
 
 /* Tauri Specta runtime */

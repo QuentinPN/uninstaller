@@ -135,7 +135,16 @@ export const fr = {
   },
   backups: {
     count: (n: number) => `${n} lot${n > 1 ? "s" : ""} en quarantaine`,
-    quarantine: "Quarantaine",
+    timeline: "Chronologie",
+    showPoints: "Afficher les points de restauration",
+    loadingPoints: "Lecture des points…",
+    noPoints: "Windows ne garde aucun point de restauration.",
+    pointsFailed: "Les points de restauration n'ont pas pu être lus.",
+    /** Under a restore point's description. */
+    pointNumber: (n: number) => `Point de restauration n° ${n}`,
+    /** Opens Windows' own wizard, where the point is chosen and confirmed. */
+    openRestore: "Restaurer…",
+    openFailed: "La Restauration du système n'a pas pu s'ouvrir.",
     /** What a batch still holds: "12 éléments · 3 clés" (files, folders and links are elements). */
     contents: (files: number, keys: number) => {
       const parts = [];
