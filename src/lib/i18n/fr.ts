@@ -1,0 +1,37 @@
+// Every user-facing label lives here (CLAUDE.md): components never hard-code text.
+export const fr = {
+  window: {
+    minimize: "Réduire",
+    maximize: "Agrandir",
+    restore: "Niveau inférieur",
+    close: "Fermer",
+    elevated: "Administrateur",
+    elevatedHint:
+      "L'application tourne en administrateur, vue web comprise. Relancez-la normalement : les opérations qui en ont besoin demanderont l'autorisation.",
+  },
+  nav: {
+    label: "Sections",
+    programs: "Programmes",
+    apps: "Applications Windows",
+    extensions: "Extensions",
+    tools: "Outils",
+    backups: "Sauvegardes",
+    tracking: "Suivi",
+    settings: "Réglages",
+  },
+  /** Screens not built yet: what will be there, and when. */
+  upcoming: {
+    title: "Pas encore là",
+    programs:
+      "Phase 1 : la liste de vos programmes installés, avec recherche, tri, tailles et icônes.",
+    apps: "Phase 5 : les applications du Microsoft Store et celles préinstallées.",
+    extensions: "Phase 5 : les extensions de Chrome, Edge, Brave et Firefox.",
+    tools:
+      "Phase 7 : démarrage, fichiers inutiles, navigateurs, historiques, broyeur et outils Windows.",
+    backups:
+      "Phase 2 : points de restauration, sauvegardes du registre et éléments en quarantaine.",
+    tracking:
+      "Phase 8 : suivre une installation pour la défaire entièrement plus tard.",
+    settings: "Les réglages arrivent avec les fonctions qui en ont besoin.",
+  },
+} as const;

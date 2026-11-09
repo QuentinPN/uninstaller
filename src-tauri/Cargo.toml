@@ -1,0 +1,39 @@
+[package]
+name = "uninstaller"
+description = "Désinstalleur Windows rapide, sûr et sobre"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+# No `version`: package.json is the single source (tauri.conf.json reads it).
+
+[lib]
+name = "uninstaller_lib"
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+tauri = { version = "2.11.6", features = [] }
+serde = { version = "1.0.229", features = ["derive"] }
+specta = { version = "=2.0.0-rc.26", features = ["derive"] }
+tauri-specta = { version = "=2.0.0-rc.26", features = ["derive", "typescript"] }
+windows = { version = "0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+specta-typescript = "=0.0.13"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = true
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"

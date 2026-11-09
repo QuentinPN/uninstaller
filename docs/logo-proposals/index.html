@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Propositions de logo</title>
+<style>
+  :root {
+    --bg: #000; --surface: #1C1C1E; --surface-2: #2C2C2E;
+    --text: #F5F5F7; --text-2: rgb(235 235 245 / 0.7); --text-3: rgb(235 235 245 / 0.55);
+    --light: #F5F5F7; --light-2: #E5E5EA; --hairline: rgb(235 235 245 / 0.08);
+    --r-sm: 10px; --r-md: 14px; --r-lg: 22px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; padding: 32px 16px 64px; }
+  main { max-width: 1120px; margin: 0 auto; }
+  h1 { font-size: 28px; font-weight: 500; margin: 0 0 4px; }
+  .lead { color: var(--text-2); margin: 0 0 32px; }
+  .taskbar { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 12px; border-radius: var(--r-md); margin-bottom: 12px; align-items: center; }
+  .taskbar.dark { background: var(--surface); }
+  .taskbar.light { background: var(--light-2); }
+  .taskbar span { font-size: 12px; width: 96px; }
+  .taskbar.dark span { color: var(--text-3); }
+  .taskbar.light span { color: #3A3A3C; }
+  .taskbar img { display: block; padding: 4px; border-radius: 6px; }
+  section.row { display: grid; grid-template-columns: minmax(0, 512px) 1fr; gap: 32px; padding: 32px 0; border-top: 1px solid var(--hairline); }
+  section.row:first-of-type { margin-top: 32px; }
+  .big { width: 100%; max-width: 512px; aspect-ratio: 1; display: block; }
+  h2 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
+  .idea { color: var(--text-2); margin: 0 0 24px; }
+  .file { color: var(--text-3); font-family: ui-monospace, Consolas, monospace; font-size: 12px; margin-bottom: 16px; }
+  .swatches { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .swatch { border-radius: var(--r-md); padding: 20px; display: flex; gap: 20px; align-items: flex-end; }
+  .swatch.dark { background: var(--bg); border: 1px solid var(--hairline); }
+  .swatch.light { background: var(--light); }
+  .swatch figure { margin: 0; display: grid; justify-items: center; gap: 8px; }
+  .swatch figcaption { font-size: 12px; font-variant-numeric: tabular-nums; }
+  .swatch.dark figcaption { color: var(--text-3); }
+  .swatch.light figcaption { color: #6E6E73; }
+  .mid { margin-top: 12px; }
+  @media (max-width: 760px) { section.row { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Uninstaller, propositions de logo</h1>
+  <p class="lead">Quatorze pistes, chacune en 512, 128, 32 et 16 px, sur fond noir et sur fond clair</p>
+
+  <div class="taskbar dark" id="tb-dark"><span>Barre sombre</span></div>
+  <div class="taskbar light" id="tb-light"><span>Barre claire</span></div>
+  <div id="rows"></div>
+</main>
+<script>
+  const logos = [
+    ["01-dissolution", "Dissolution", "Un bloc plein dont l’angle se défait en fragments qui s’envolent : le programme part, morceau par morceau"],
+    ["02-grille", "Case libérée", "Une grille d’applications dont une case sort de son emplacement et laisse une place vide"],
+    ["03-bouclier", "Bouclier", "Un bouclier plein percé d’une flèche qui sort : retirer sans risque pour le système"],
+    ["04-cercle", "Cercle qui se vide", "Un anneau autour d’un disque presque vidé, il ne reste qu’un quart : l’espace qui se libère"],
+    ["05-monogramme", "Monogramme U", "Un U plein et massif dont le haut d’un jambage se détache et glisse hors de la lettre"],
+    ["06-couches", "Couches", "Trois strates isométriques, la plus haute se soulève et s’écarte : une installation qu’on défait couche par couche"],
+    ["07-paquet", "Paquet ouvert", "Une boîte isométrique ouverte d’où sort un petit cube : le contenu installé qu’on extrait"],
+    ["08-effacement", "Effacement", "Un bloc qui s’efface vers la droite en bandes de plus en plus fines et transparentes"],
+    ["09-corbeille-ouverte", "Corbeille ouverte", "Une tuile d’application bleue qui tombe dans une corbeille pleine et sans couvercle"],
+    ["10-couvercle", "Couvercle levé", "Une corbeille rainurée dont le couvercle bleu se soulève, prête à recevoir"],
+    ["11-corbeille-sure", "Corbeille sûre", "Une corbeille bleue frappée d’une coche en creux : supprimé, et proprement"],
+    ["12-u-corbeille", "U-corbeille", "Le U de Uninstaller devient le bac d’une corbeille, coiffé d’un couvercle bleu entrouvert"],
+    ["13-u-ouvert", "U ouvert", "Le U massif du monogramme sert de bac ; le couvercle bleu bascule et le haut d’un jambage s’en échappe"],
+    ["14-u-chute", "U qui avale", "Le U-corbeille sous son couvercle blanc, une tuile bleue tombe entre ses jambages"],
+  ];
+  const img = (f, s) => `<img src="${f}.svg" width="${s}" height="${s}" alt="">`;
+  const fig = (f, s) => `<figure>${img(f, s)}<figcaption>${s} px</figcaption></figure>`;
+  const swatch = (f, tone, sizes) => `<div class="swatch ${tone}">${sizes.map((s) => fig(f, s)).join("")}</div>`;
+  document.getElementById("rows").innerHTML = logos.map(([f, name, idea]) => `
+    <section class="row">
+      <img class="big" src="${f}.svg" alt="${name}">
+      <div>
+        <h2>${name}</h2>
+        <p class="idea">${idea}</p>
+        <div class="file">${f}.svg</div>
+        <div class="swatches">${swatch(f, "dark", [32, 16])}${swatch(f, "light", [32, 16])}</div>
+        <div class="swatches mid">${swatch(f, "dark", [128])}${swatch(f, "light", [128])}</div>
+      </div>
+    </section>`).join("");
+  for (const id of ["tb-dark", "tb-light"]) {
+    document.getElementById(id).insertAdjacentHTML("beforeend", logos.map(([f]) => img(f, 32)).join(""));
+  }
+</script>
+</body>
+</html>

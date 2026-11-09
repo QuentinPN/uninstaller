@@ -1,0 +1,33 @@
+﻿# cargo deny check: licences, RustSec advisories, banned and unknown sources.
+# Windows-only app: Linux/macOS-only crates of Tauri's tree are out of scope.
+
+[graph]
+targets = ["x86_64-pc-windows-msvc"]
+
+[advisories]
+yanked = "deny"
+# Unmaintained crates are reported for our direct dependencies only: the current
+# hits (paste, unic-*) sit deep in Tauri's tree with no upgrade available.
+unmaintained = "workspace"
+
+[licenses]
+# The app itself is private (publish = false) and carries no licence.
+private = { ignore = true }
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "Zlib",
+  "Unicode-3.0",
+  "MPL-2.0",
+  "CC0-1.0",
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
