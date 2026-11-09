@@ -54,7 +54,8 @@
   --motion-fast: 120ms;
   --motion-base: 200ms;
   --motion-lift: 320ms;
-  --ease-spring: cubic-bezier(0.2, 0.9, 0.25, 1.15);
+  /* Settles without overshoot: a panel sliding in does not bounce. */
+  --ease-out: cubic-bezier(0.2, 0.9, 0.25, 1);
   --lift-scale: 1.06;
   --shadow-lift:
     0 22px 44px rgb(0 0 0 / 0.65), 0 0 0 1px rgb(255 255 255 / 0.28);
@@ -110,6 +111,10 @@ select {
 h1,
 h2 {
   font-family: var(--font-display);
+}
+
+/* Tight tracking only on large display text; small headings keep the default. */
+h1 {
   letter-spacing: -0.02em;
 }
 

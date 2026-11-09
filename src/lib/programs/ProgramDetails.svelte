@@ -128,7 +128,7 @@ function openFolder() {
     border-radius: var(--radius-lg);
     background: var(--material-thick);
     backdrop-filter: var(--material-blur);
-    animation: enter var(--motion-base) var(--ease-spring);
+    animation: enter var(--motion-base) var(--ease-out);
   }
   @keyframes enter {
     from {
