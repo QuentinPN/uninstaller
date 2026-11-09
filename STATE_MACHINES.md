@@ -40,9 +40,24 @@ Icônes (tranche 4) : chaque ligne demande `icon://<id>` à l'affichage ; 404 ou
 
 Tailles calculées (tranche 5) : à chaque passage en Loaded, `computeSizes` part avec un nouveau `Channel` et `sizing = true` (« Calcul des tailles… » dans l'en-tête). Chaque paquet remplit `sizes` (id → Kio) ; liste, tri et totaux préfèrent la taille mesurée à la taille déclarée. Fin ou erreur → `sizing = false`, sans message : les tailles déclarées restent. Un « Réessayer » vide `sizes` et incrémente `generation` : les paquets d'un flux plus ancien sont ignorés.
 
-### 2. Scan des restes · 3. Lot en quarantaine (`Active → Restoring → Restored` / `Purging → Purged`) · 4. Session de suivi d'installation · 5. Mode Chasseur
+### 3. Élément d'un lot en quarantaine (`core/quarantine.rs`, Phase 2 tranche 1)
 
-À détailler en Phase 2-8, au même format.
+| État | Événement | État suivant | Effet |
+|------|-----------|--------------|-------|
+| — | `quarantine(chemin)`, chemin protégé | — | `Error::Protected`, manifeste inchangé |
+| — | `quarantine(chemin)` | Pending | ligne écrite dans le manifeste **avant** le déplacement |
+| Pending | déplacement réussi | Moved | manifeste réécrit |
+| Pending | déplacement échoué (autre volume : `OtherVolume`) | — | ligne retirée, manifeste réécrit |
+| Moved | `restore()`, origine libre, contenu intact | Restored | élément remis en place, manifeste réécrit |
+| Moved | `restore()`, origine occupée | Moved | `Error::Exists`, arrêt, rien écrasé |
+| Moved | `restore()`, empreinte différente | Moved | `Error::Altered`, arrêt |
+| Restored | `restore()` | Restored | ignoré |
+
+Le manifeste est réécrit par fichier temporaire + renommage ; une empreinte qui ne correspond plus donne `Error::Corrupt` à l'ouverture. Pas encore faits : reprise au démarrage d'un élément resté `Pending`, états du lot (`Active → Restoring → Restored` / `Purging → Purged`).
+
+### 2. Scan des restes · 4. Session de suivi d'installation · 5. Mode Chasseur
+
+À détailler en Phase 3-8, au même format.
 
 ## États ou transitions invalides trouvés
 

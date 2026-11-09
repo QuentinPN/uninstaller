@@ -45,7 +45,7 @@ Le contenu (HTML, CSV, TXT) est construit côté UI (`src/lib/programs/export.ts
 
 ## Données locales
 
-`%LOCALAPPDATA%\Uninstaller\` : `quarantine/` (fichiers déplacés + `manifest.json` signé par hash), `backups/` (`.reg`), `traces/` (journaux de suivi d'installation), `cache/icons/`, `settings.json`. Mode portable : même arborescence à côté de l'exécutable.
+`%LOCALAPPDATA%\Uninstaller\` : `quarantine/<lot>/` (fichiers déplacés, `.reg` des clés supprimées et `manifest.json` portant l'empreinte SHA-256 de son contenu, ADR 0003 et 0005), `traces/` (journaux de suivi d'installation), `cache/icons/`, `settings.json`. Mode portable : même arborescence à côté de l'exécutable.
 
 ## Machines à états
 
