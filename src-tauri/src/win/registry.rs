@@ -4,8 +4,8 @@ use windows::Win32::Foundation::{ERROR_SUCCESS, FILETIME};
 use windows::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, HKEY_USERS, KEY_READ, KEY_WOW64_32KEY,
     KEY_WOW64_64KEY, REG_ROUTINE_FLAGS, REG_SAM_FLAGS, RRF_NOEXPAND, RRF_RT_REG_DWORD,
-    RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ, RegCloseKey, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW,
-    RegQueryInfoKeyW,
+    RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ, RegCloseKey, RegEnumKeyExW, RegEnumValueW, RegGetValueW,
+    RegOpenKeyExW, RegQueryInfoKeyW,
 };
 use windows::core::{HSTRING, PWSTR};
 
@@ -33,6 +33,18 @@ impl Hive {
 pub enum View {
     Native64,
     Wow32,
+}
+
+/// One value as stored: its name (`""` for the default value), its type number and its raw
+/// bytes.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "Phase 2: tested now, called by the next slices")
+)]
+pub struct Value {
+    pub name: String,
+    pub kind: u32,
+    pub data: Vec<u8>,
 }
 
 /// An open key, closed on drop.
@@ -63,11 +75,16 @@ impl Key {
         open(self.handle, name, self.access)
     }
 
-    /// Names of the direct subkeys.
+    /// Names of the direct subkeys; one that cannot be read is skipped.
     pub fn subkey_names(&self) -> Vec<String> {
-        let Some(info) = self.info() else {
-            return Vec::new();
-        };
+        self.enum_subkeys()
+            .map(|(names, _)| names)
+            .unwrap_or_default()
+    }
+
+    /// The subkey names and how many subkeys the key holds.
+    fn enum_subkeys(&self) -> Option<(Vec<String>, u32)> {
+        let info = self.info()?;
         let mut names = Vec::with_capacity(info.subkeys as usize);
         let mut buffer = vec![0u16; info.max_subkey_len as usize + 1];
         for index in 0..info.subkeys {
@@ -89,7 +106,7 @@ impl Key {
                 names.push(String::from_utf16_lossy(&buffer[..len as usize]));
             }
         }
-        names
+        Some((names, info.subkeys))
     }
 
     /// A REG_SZ or REG_EXPAND_SZ value (environment variables left unexpanded), trimmed;
@@ -124,6 +141,57 @@ impl Key {
         self.info().map(|info| info.last_write)
     }
 
+    /// Every subkey name, or `None` if one cannot be read.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Phase 2: tested now, called by the next slices")
+    )]
+    pub fn all_subkey_names(&self) -> Option<Vec<String>> {
+        let (names, count) = self.enum_subkeys()?;
+        (names.len() == count as usize).then_some(names)
+    }
+
+    /// Every value with its raw bytes, in the order the registry lists them, or `None`
+    /// if one cannot be read (including one that grew since the key was measured).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Phase 2: tested now, called by the next slices")
+    )]
+    pub fn values(&self) -> Option<Vec<Value>> {
+        let info = self.info()?;
+        let mut values = Vec::with_capacity(info.values as usize);
+        let mut name = vec![0u16; info.max_value_name_len as usize + 1];
+        let mut data = vec![0u8; info.max_value_len as usize];
+        for index in 0..info.values {
+            let mut name_len = name.len() as u32;
+            let mut data_len = data.len() as u32;
+            let mut kind = 0u32;
+            // SAFETY: `name` holds `name_len` u16 and `data` holds `data_len` bytes, both
+            // owned here; `kind` is a live local.
+            let status = unsafe {
+                RegEnumValueW(
+                    self.handle,
+                    index,
+                    Some(PWSTR(name.as_mut_ptr())),
+                    &mut name_len,
+                    None,
+                    Some(&mut kind),
+                    Some(data.as_mut_ptr()),
+                    Some(&mut data_len),
+                )
+            };
+            if status != ERROR_SUCCESS {
+                return None;
+            }
+            values.push(Value {
+                name: String::from_utf16_lossy(&name[..name_len as usize]),
+                kind,
+                data: data[..data_len as usize].to_vec(),
+            });
+        }
+        Some(values)
+    }
+
     fn get(
         &self,
         name: &str,
@@ -142,6 +210,9 @@ impl Key {
     fn info(&self) -> Option<KeyInfo> {
         let mut subkeys = 0u32;
         let mut max_subkey_len = 0u32;
+        let mut values = 0u32;
+        let mut max_value_name_len = 0u32;
+        let mut max_value_len = 0u32;
         let mut last_write = FILETIME::default();
         // SAFETY: every requested output points to a live local; the rest are not requested.
         let status = unsafe {
@@ -153,9 +224,9 @@ impl Key {
                 Some(&mut subkeys),
                 Some(&mut max_subkey_len),
                 None,
-                None,
-                None,
-                None,
+                Some(&mut values),
+                Some(&mut max_value_name_len),
+                Some(&mut max_value_len),
                 None,
                 Some(&mut last_write),
             )
@@ -163,6 +234,9 @@ impl Key {
         (status == ERROR_SUCCESS).then(|| KeyInfo {
             subkeys,
             max_subkey_len,
+            values,
+            max_value_name_len,
+            max_value_len,
             last_write: (u64::from(last_write.dwHighDateTime) << 32)
                 | u64::from(last_write.dwLowDateTime),
         })
@@ -181,6 +255,23 @@ impl Drop for Key {
 struct KeyInfo {
     subkeys: u32,
     max_subkey_len: u32,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Phase 2: tested now, called by the next slices")
+    )]
+    values: u32,
+    /// In characters, without the terminating null.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Phase 2: tested now, called by the next slices")
+    )]
+    max_value_name_len: u32,
+    /// In bytes.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Phase 2: tested now, called by the next slices")
+    )]
+    max_value_len: u32,
     last_write: u64,
 }
 
