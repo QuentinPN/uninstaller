@@ -144,6 +144,11 @@ export const fr = {
       return parts.length ? parts.join(" · ") : "Tout restauré";
     },
     purgeOn: (day: string) => `Purge le ${day}`,
+    purgeAfter: "Purge automatique après",
+    days: (n: number) => `${n} jours`,
+    purgeHint:
+      "Les lots plus anciens que ce délai sont purgés au lancement suivant.",
+    settingFailed: "Le réglage n'a pas pu être enregistré.",
     purging: "Purge en cours",
     restore: "Restaurer",
     purge: "Purger",

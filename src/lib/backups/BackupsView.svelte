@@ -6,6 +6,7 @@ import {
   type BatchFailure,
   type BatchSummary,
   commands,
+  PURGE_DAYS,
 } from "../ipc/bindings";
 import EmptyState from "../ui/EmptyState.svelte";
 
@@ -19,6 +20,8 @@ let busy = $state<string | null>(null);
 let confirming = $state<string | null>(null);
 let notice = $state<{ text: string; failed: boolean } | null>(null);
 let creatingPoint = $state(false);
+/** Null until the saved settings are read. */
+let purgeDays = $state<number | null>(null);
 const totalKib = $derived(
   batches?.reduce((sum, batch) => sum + batch.sizeKib, 0) ?? 0,
 );
@@ -29,6 +32,14 @@ function load() {
     (list) => (batches = list),
     () => (failed = true),
   );
+}
+
+/** Saves the new delay, then rereads the list, whose purge dates follow it. */
+async function savePurgeDays() {
+  if (purgeDays === null) return;
+  const saved = await commands.saveSettings({ purgeDays }).catch(() => false);
+  notice = saved ? null : { text: t.settingFailed, failed: true };
+  load();
 }
 
 /** Runs a batch action, then rereads the list, which shows what it changed. */
@@ -75,7 +86,13 @@ function day(secs: number): string {
   return formatDate(isoDate(new Date(secs * 1000)));
 }
 
-onMount(load);
+onMount(() => {
+  load();
+  commands.getSettings().then(
+    (settings) => (purgeDays = settings.purgeDays),
+    () => {},
+  );
+});
 </script>
 
 <header class="head">
@@ -94,6 +111,17 @@ onMount(load);
     {t.createPoint}
   </button>
 </header>
+
+{#if purgeDays !== null}
+  <label class="select-label setting" title={t.purgeHint}>
+    {t.purgeAfter}
+    <select bind:value={purgeDays} onchange={savePurgeDays}>
+      {#each PURGE_DAYS as days (days)}
+        <option value={days}>{t.days(days)}</option>
+      {/each}
+    </select>
+  </label>
+{/if}
 
 {#if failed}
   <EmptyState title={t.error.title} text={t.error.text} onretry={load} />
@@ -183,6 +211,9 @@ onMount(load);
   .create {
     flex: none;
     margin-left: auto;
+  }
+  .setting {
+    margin-bottom: var(--space-4);
   }
   h2 {
     margin: 0 0 var(--space-2);

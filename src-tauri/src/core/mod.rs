@@ -17,4 +17,6 @@ pub mod protect;
 )]
 pub mod quarantine;
 pub mod registry;
+pub mod settings;
 pub mod sizes;
+pub mod store;

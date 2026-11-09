@@ -13,6 +13,7 @@ use tauri::ipc::Channel;
 use crate::core::broker::{Client, Reply, Request, RestorePoint};
 use crate::core::inventory::{self, Program};
 use crate::core::quarantine::{self, BatchAction, BatchFailure, BatchSummary};
+use crate::core::settings::{self, Settings};
 use crate::core::sizes::{self, ProgramSize};
 use crate::win::dialog::{self, SaveAs};
 use crate::win::process;
@@ -52,9 +53,25 @@ pub async fn list_programs() -> Vec<Program> {
 #[tauri::command]
 #[specta::specta]
 pub async fn list_quarantine() -> Vec<BatchSummary> {
+    let delay = settings::current().purge_delay();
     quarantine::root()
-        .map(|root| quarantine::list(&root))
+        .map(|root| quarantine::list(&root, delay))
         .unwrap_or_default()
+}
+
+/// The saved settings, or the defaults.
+#[tauri::command]
+#[specta::specta]
+pub fn get_settings() -> Settings {
+    settings::current()
+}
+
+/// Saves `settings`; false when a value is not one the screen offers or the file
+/// cannot be written.
+#[tauri::command]
+#[specta::specta]
+pub fn save_settings(settings: Settings) -> bool {
+    settings.is_valid() && settings::path().is_some_and(|path| settings.save(&path).is_ok())
 }
 
 /// Runs `action` on the batch the UI names, off the main thread. When Windows denies

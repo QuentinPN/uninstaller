@@ -22,6 +22,13 @@ export const commands = {
 	 *  exist yet.
 	 */
 	listQuarantine: () => __TAURI_INVOKE<BatchSummary[]>("list_quarantine"),
+	/**  The saved settings, or the defaults. */
+	getSettings: () => __TAURI_INVOKE<Settings_Serialize>("get_settings"),
+	/**
+	 *  Saves `settings`; false when a value is not one the screen offers or the file
+	 *  cannot be written.
+	 */
+	saveSettings: (settings: Settings_Deserialize) => __TAURI_INVOKE<boolean>("save_settings", { settings }),
 	/**
 	 *  Puts a batch's items back, last moved first (F12); stops at the first that cannot
 	 *  go back, the ones before it staying restored.
@@ -50,6 +57,9 @@ export const commands = {
 	 */
 	saveExport: (request: Export) => typedError<string | null, string>(__TAURI_INVOKE("save_export", { request })),
 };
+
+/* Constants */
+export const PURGE_DAYS = [7,14,30,60,90] as const;
 
 /* Types */
 /**  Facts about the running process, shown in the title bar. */
@@ -80,7 +90,7 @@ export type BatchSummary = {
 	/**  The batch folder's name. */
 	name: string,
 	created: number,
-	/**  When it is due to be purged (`created` + `PURGE_DELAY`). */
+	/**  When it is due to be purged (`created` + the purge delay setting). */
 	purgeOn: number,
 	/**  Files, folders and links not restored. */
 	files: number,
@@ -204,6 +214,18 @@ export type Scope =
 "user" | 
 /**  HKU: installed for another account of this PC, whose hive is loaded. */
 "otherUser";
+
+export type Settings = Settings_Serialize | Settings_Deserialize;
+
+export type Settings_Deserialize = {
+	/**  How long a quarantine batch stays restorable, one of `PURGE_DAYS`. */
+	purgeDays?: number,
+};
+
+export type Settings_Serialize = {
+	/**  How long a quarantine batch stays restorable, one of `PURGE_DAYS`. */
+	purgeDays: number,
+};
 
 /* Tauri Specta runtime */
 async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; data: T } | { status: "error"; error: E }> {

@@ -10,18 +10,22 @@ use tauri_specta::{Builder, collect_commands};
 
 /// Every IPC command, listed once for both the app and the bindings export.
 fn ipc() -> Builder<tauri::Wry> {
-    Builder::<tauri::Wry>::new().commands(collect_commands![
-        commands::app_info,
-        commands::list_programs,
-        commands::list_shown,
-        commands::list_quarantine,
-        commands::restore_batch,
-        commands::purge_batch,
-        commands::create_restore_point,
-        commands::compute_sizes,
-        commands::open_install_folder,
-        commands::save_export
-    ])
+    Builder::<tauri::Wry>::new()
+        .commands(collect_commands![
+            commands::app_info,
+            commands::list_programs,
+            commands::list_shown,
+            commands::list_quarantine,
+            commands::get_settings,
+            commands::save_settings,
+            commands::restore_batch,
+            commands::purge_batch,
+            commands::create_restore_point,
+            commands::compute_sizes,
+            commands::open_install_folder,
+            commands::save_export
+        ])
+        .constant("PURGE_DAYS", core::settings::PURGE_DAYS)
 }
 
 /// `icon://localhost/<id>` (WebView2: `http://icon.localhost/<id>`): the program's icon
@@ -50,13 +54,13 @@ pub fn run() {
     }
     commands::prefetch_programs();
     // Moves a crash interrupted are settled before anything else touches the batches,
-    // then batches older than the delay are purged (SECURITY.md 1).
+    // then batches older than the delay setting are purged (SECURITY.md 1).
     if let Some(root) = core::quarantine::root() {
         std::thread::spawn(move || {
             core::quarantine::resume_all(&root);
             core::quarantine::purge_expired(
                 &root,
-                core::quarantine::PURGE_DELAY,
+                core::settings::current().purge_delay(),
                 std::time::SystemTime::now(),
             );
         });

@@ -253,7 +253,7 @@ onMount(load);
     title={fr.programs.searchHint}
     bind:value={query}
   />
-  <label class="sort">
+  <label class="select-label">
     {fr.programs.sortBy}
     <select bind:value={sort} onchange={() => (reversed = false)}>
       {#each SORT_KEYS as key (key)}
@@ -261,7 +261,7 @@ onMount(load);
       {/each}
     </select>
   </label>
-  <label class="sort">
+  <label class="select-label">
     {fr.programs.groupBy}
     <select bind:value={group}>
       {#each GROUP_KEYS as key (key)}
@@ -269,7 +269,7 @@ onMount(load);
       {/each}
     </select>
   </label>
-  <label class="sort">
+  <label class="select-label">
     {fr.programs.viewAs}
     <select bind:value={view}>
       {#each VIEWS as key (key)}
@@ -497,28 +497,10 @@ onMount(load);
   .search::placeholder {
     color: var(--color-text-muted);
   }
-  .sort,
   .menu-button,
   .menu-item,
   .toggle {
     white-space: nowrap;
-  }
-  .sort {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--color-text-secondary);
-    font-size: var(--font-size-sm);
-  }
-  select {
-    padding: var(--space-1) var(--space-2);
-    border: none;
-    border-radius: var(--radius-sm);
-    background: var(--fill-glass);
-    color: var(--color-text);
-  }
-  option {
-    background: var(--color-elevated);
   }
   .toggles {
     display: flex;

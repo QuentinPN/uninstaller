@@ -5,7 +5,7 @@
 
 use std::fmt;
 use std::fs::{self, File};
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -16,16 +16,12 @@ use specta::Type;
 use super::protect;
 use super::registry::reg_file;
 use super::sizes;
+use super::store;
 use crate::win::registry::{self, Hive, View};
 
 const MANIFEST: &str = "manifest.json";
-/// Written in full, then renamed over the manifest (ADR 0005).
-const MANIFEST_NEXT: &str = "manifest.json.next";
 /// Where moved items are kept, one entry per item, named by its index.
 const STORE: &str = "items";
-/// How long a batch stays restorable before it is purged (SECURITY.md: default 14
-/// days, a setting later).
-pub const PURGE_DELAY: Duration = Duration::from_secs(14 * 24 * 3600);
 
 #[derive(Debug)]
 pub enum Error {
@@ -187,7 +183,7 @@ pub struct BatchSummary {
     /// The batch folder's name.
     pub name: String,
     pub created: u32,
-    /// When it is due to be purged (`created` + `PURGE_DELAY`).
+    /// When it is due to be purged (`created` + the purge delay setting).
     pub purge_on: u32,
     /// Files, folders and links not restored.
     pub files: u32,
@@ -245,7 +241,7 @@ impl Batch {
         &self.items
     }
 
-    pub fn summary(&self) -> BatchSummary {
+    pub fn summary(&self, delay: Duration) -> BatchSummary {
         let left = || self.items.iter().filter(|i| i.state != State::Restored);
         let keys = left().filter(|i| i.kind == Kind::Key).count();
         let files = left().count() - keys;
@@ -258,7 +254,7 @@ impl Batch {
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default(),
             created: secs(self.created),
-            purge_on: secs(self.created.saturating_add(PURGE_DELAY.as_secs())),
+            purge_on: secs(self.created.saturating_add(delay.as_secs())),
             files: count(files),
             keys: count(keys),
             size_kib: sizes::kib(sizes::folder_bytes(&self.dir.join(STORE))),
@@ -331,7 +327,7 @@ impl Batch {
         });
         self.save()?;
         let stored = self.stored(index);
-        let written = write_synced(&stored, &saved)
+        let written = store::write_synced(&stored, &saved)
             .map_err(Error::from)
             .and_then(|()| {
                 if file_hash(&stored)? == hash {
@@ -464,7 +460,7 @@ impl Batch {
         self.save()
     }
 
-    /// Writes the manifest next to it, then renames it over the old one.
+    /// Replaces the manifest in one step (ADR 0005).
     fn save(&self) -> Result<(), Error> {
         let manifest = Manifest {
             hash: content_hash(self.created, self.state, &self.items)?,
@@ -472,21 +468,14 @@ impl Batch {
             state: self.state,
             items: self.items.clone(),
         };
-        let next = self.dir.join(MANIFEST_NEXT);
         let text = serde_json::to_vec_pretty(&manifest).map_err(io::Error::other)?;
-        write_synced(&next, &text)?;
-        fs::rename(next, self.dir.join(MANIFEST))?;
-        Ok(())
+        Ok(store::replace(&self.dir.join(MANIFEST), &text)?)
     }
 }
 
 /// `%LOCALAPPDATA%\Uninstaller\quarantine` (ARCHITECTURE.md, Données locales).
 pub fn root() -> Option<PathBuf> {
-    std::env::var_os("LOCALAPPDATA").map(|local| {
-        PathBuf::from(local)
-            .join("Uninstaller")
-            .join("quarantine")
-    })
+    store::data_dir().map(|dir| dir.join("quarantine"))
 }
 
 /// At startup: resumes every batch under `root`. A batch that cannot be read is left
@@ -508,11 +497,12 @@ pub fn batch_dir(root: &Path, name: &str) -> Option<PathBuf> {
     plain.then(|| root.join(name))
 }
 
-/// Every batch under `root` that can be read, newest first.
-pub fn list(root: &Path) -> Vec<BatchSummary> {
+/// Every batch under `root` that can be read, newest first, each purged `delay` after
+/// it was made.
+pub fn list(root: &Path, delay: Duration) -> Vec<BatchSummary> {
     let mut batches: Vec<_> = batch_dirs(root)
         .filter_map(|dir| Batch::open(&dir).ok())
-        .map(|batch| batch.summary())
+        .map(|batch| batch.summary(delay))
         .collect();
     batches.sort_by(|a, b| b.created.cmp(&a.created).then_with(|| a.name.cmp(&b.name)));
     batches
@@ -546,13 +536,6 @@ pub fn purge_expired(root: &Path, delay: Duration, now: SystemTime) -> usize {
         .map(Batch::purge)
         .filter(Result::is_ok)
         .count()
-}
-
-/// Writes `bytes` and waits until they are on disk.
-fn write_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut file = File::create(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
 }
 
 /// A key item's origin, split as `Hive::parse` does; a manifest naming no known hive
@@ -699,14 +682,15 @@ mod tests {
         fs::write(dir.join("target\\kept.txt"), b"kept").unwrap();
         junction(&dir.join("app\\link"), &dir.join("target"));
         old.quarantine(&dir.join("app\\link")).unwrap();
-        old.created -= PURGE_DELAY.as_secs();
+        let delay = Duration::from_secs(7 * 86_400);
+        old.created -= delay.as_secs();
         old.save().unwrap();
         let mut recent = Batch::create(&root, "recent").unwrap();
         recent.quarantine(&dir.join("app\\data")).unwrap();
         fs::create_dir(root.join("damaged")).unwrap();
         fs::write(root.join("damaged\\manifest.json"), b"{").unwrap();
 
-        let listed = list(&root);
+        let listed = list(&root, delay);
         assert_eq!(
             listed.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
             ["recent", "old"]
@@ -715,11 +699,11 @@ mod tests {
         assert_eq!(listed[1].size_kib, 1);
         assert_eq!(
             u64::from(listed[1].purge_on),
-            u64::from(listed[1].created) + PURGE_DELAY.as_secs()
+            u64::from(listed[1].created) + delay.as_secs()
         );
         assert_eq!((listed[0].files, listed[0].size_kib), (1, 1));
 
-        assert_eq!(purge_expired(&root, PURGE_DELAY, SystemTime::now()), 1);
+        assert_eq!(purge_expired(&root, delay, SystemTime::now()), 1);
         assert!(!root.join("old").exists());
         assert!(!dir.join("app\\app.exe").exists());
         assert_eq!(fs::read(dir.join("target\\kept.txt")).unwrap(), b"kept");
