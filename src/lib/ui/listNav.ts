@@ -28,3 +28,48 @@ export function nextIndex(
       return null;
   }
 }
+
+/** Selected rows of a list: `active` has the keyboard, `anchor` starts Shift ranges. */
+export interface Selection {
+  active: string | null;
+  anchor: string | null;
+  keys: ReadonlySet<string>;
+}
+
+export const EMPTY_SELECTION: Selection = {
+  active: null,
+  anchor: null,
+  keys: new Set(),
+};
+
+/** How a click or key changes the selection: plain, Ctrl or Shift. */
+export type PickMode = "only" | "toggle" | "range";
+
+export function pickMode(event: MouseEvent | KeyboardEvent): PickMode {
+  if (event.shiftKey) return "range";
+  return event.ctrlKey && event instanceof MouseEvent ? "toggle" : "only";
+}
+
+/** The selection after picking `key`, with rows in display `order`. */
+export function pick(
+  order: readonly string[],
+  selection: Selection,
+  key: string,
+  mode: PickMode,
+): Selection {
+  if (mode === "toggle") {
+    const keys = new Set(selection.keys);
+    if (!keys.delete(key)) keys.add(key);
+    return { active: key, anchor: key, keys };
+  }
+  if (mode === "range") {
+    const anchor = selection.anchor ?? key;
+    const from = order.indexOf(anchor);
+    const to = order.indexOf(key);
+    if (from >= 0 && to >= 0) {
+      const [lo, hi] = from < to ? [from, to] : [to, from];
+      return { active: key, anchor, keys: new Set(order.slice(lo, hi + 1)) };
+    }
+  }
+  return { active: key, anchor: key, keys: new Set([key]) };
+}

@@ -21,6 +21,7 @@ export const fr = {
   },
   programs: {
     count: (n: number) => `${n} programme${n > 1 ? "s" : ""}`,
+    selected: (n: number) => `${n} sélectionné${n > 1 ? "s" : ""}`,
     search: "Rechercher",
     searchHint: "Rechercher par nom, éditeur, commentaire ou dossier",
     sortBy: "Trier par",

@@ -4,6 +4,7 @@ import { formatDate, formatSize } from "../format";
 import { fr } from "../i18n/fr";
 import { commands, type Program } from "../ipc/bindings";
 import EmptyState from "../ui/EmptyState.svelte";
+import { EMPTY_SELECTION, type Selection } from "../ui/listNav";
 import VirtualList from "../ui/VirtualList.svelte";
 import ProgramDetails from "./ProgramDetails.svelte";
 import { type SortKey, totalSizeKib, visiblePrograms } from "./view";
@@ -16,12 +17,19 @@ let programs = $state<Program[] | null>(null);
 let failed = $state(false);
 let query = $state("");
 let sort = $state<SortKey>("name");
-let selected = $state<string | null>(null);
+let selection = $state<Selection>(EMPTY_SELECTION);
 let detailsOpen = $state(false);
 let list = $state<VirtualList<Program>>();
 
 const details = $derived(
-  detailsOpen ? programs?.find((p) => p.id === selected) : undefined,
+  detailsOpen ? programs?.find((p) => p.id === selection.active) : undefined,
+);
+
+/** Shown in the header once more than one row is selected. */
+const chosen = $derived(
+  selection.keys.size > 1
+    ? (programs ?? []).filter((p) => selection.keys.has(p.id))
+    : [],
 );
 
 const visible = $derived(
@@ -57,6 +65,11 @@ onMount(load);
     <p class="summary num">
       {fr.programs.count(visible.length)} · {formatSize(totalSizeKib(visible))}
     </p>
+    {#if chosen.length}
+      <p class="summary chosen num">
+        {fr.programs.selected(chosen.length)} · {formatSize(totalSizeKib(chosen))}
+      </p>
+    {/if}
   {/if}
 </header>
 
@@ -98,7 +111,7 @@ onMount(load);
 {:else}
   <VirtualList
     bind:this={list}
-    bind:selected
+    bind:selection
     items={visible}
     key={(p) => p.id}
     label={fr.programs.list}
@@ -149,6 +162,9 @@ onMount(load);
   h1 {
     margin: 0;
     font-size: var(--font-size-title);
+  }
+  .chosen {
+    color: var(--color-accent);
   }
   .summary {
     margin: 0;

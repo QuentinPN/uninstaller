@@ -1,14 +1,20 @@
 <script lang="ts" generics="T">
 import { onMount, type Snippet } from "svelte";
-import { nextIndex } from "./listNav";
+import {
+  EMPTY_SELECTION,
+  nextIndex,
+  pick,
+  pickMode,
+  type Selection,
+} from "./listNav";
 
 interface Props {
   items: readonly T[];
   key: (item: T) => string;
   row: Snippet<[T]>;
   label: string;
-  /** Key of the selected row; follows clicks and arrow keys. */
-  selected?: string | null;
+  /** Follows clicks (Ctrl, Shift) and arrow keys (Shift); Ctrl+A selects all. */
+  selection?: Selection;
   /** Space or double-click on a row. */
   onopen?: (item: T) => void;
 }
@@ -18,7 +24,7 @@ let {
   key,
   row,
   label,
-  selected = $bindable(null),
+  selection = $bindable(EMPTY_SELECTION),
   onopen,
 }: Props = $props();
 
@@ -49,8 +55,9 @@ const end = $derived(
       )
     : 0,
 );
-const selectedIndex = $derived(
-  selected == null ? -1 : items.findIndex((item) => key(item) === selected),
+const order = $derived(items.map(key));
+const activeIndex = $derived(
+  selection.active == null ? -1 : order.indexOf(selection.active),
 );
 
 /** Gives the keyboard back to the list, e.g. when a side panel closes. */
@@ -69,7 +76,12 @@ function reveal(index: number) {
 }
 
 function onkeydown(event: KeyboardEvent) {
-  const current = selectedIndex;
+  const current = activeIndex;
+  if (event.code === "KeyA" && event.ctrlKey) {
+    event.preventDefault();
+    selection = { ...selection, keys: new Set(order) };
+    return;
+  }
   if (event.code === "Space" && current >= 0) {
     event.preventDefault();
     onopen?.(items[current] as T);
@@ -80,7 +92,7 @@ function onkeydown(event: KeyboardEvent) {
   if (next === null) return;
   event.preventDefault();
   // nextIndex stays within the list.
-  selected = key(items[next] as T);
+  selection = pick(order, selection, order[next] as string, pickMode(event));
   reveal(next);
 }
 </script>
@@ -90,7 +102,8 @@ function onkeydown(event: KeyboardEvent) {
   role="listbox"
   tabindex="0"
   aria-label={label}
-  aria-activedescendant={selectedIndex >= 0 ? rowId(selectedIndex) : undefined}
+  aria-multiselectable="true"
+  aria-activedescendant={activeIndex >= 0 ? rowId(activeIndex) : undefined}
   bind:this={viewport}
   bind:clientHeight={height}
   onscroll={() => (scrollTop = viewport.scrollTop)}
@@ -105,11 +118,12 @@ function onkeydown(event: KeyboardEvent) {
         class="row"
         id={rowId(start + i)}
         role="option"
-        aria-selected={start + i === selectedIndex}
+        aria-selected={selection.keys.has(key(item))}
         aria-setsize={items.length}
         aria-posinset={start + i + 1}
         style:transform="translateY({(start + i) * rowHeight}px)"
-        onclick={() => (selected = key(item))}
+        onclick={(event) =>
+          (selection = pick(order, selection, key(item), pickMode(event)))}
         ondblclick={() => onopen?.(item)}
       >
         {@render row(item)}
