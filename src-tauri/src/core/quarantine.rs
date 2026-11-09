@@ -658,6 +658,7 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::test_support::junction;
 
     /// A fresh folder under %TEMP% standing in for a program's files (TESTING.md:
     /// destructive tests only touch what they created).
@@ -1042,16 +1043,6 @@ mod tests {
             Err(Error::Corrupt)
         ));
         fs::remove_dir_all(dir).unwrap();
-    }
-
-    fn junction(link: &Path, target: &Path) {
-        let made = std::process::Command::new("cmd")
-            .args(["/C", "mklink", "/J"])
-            .arg(link)
-            .arg(target)
-            .output()
-            .unwrap();
-        assert!(made.status.success());
     }
 
     #[test]

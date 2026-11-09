@@ -51,6 +51,13 @@ pub fn is_protected(path: &Path) -> bool {
         .chain(profiles)
         // Per-user installs (lowercase: `var` normalizes).
         .chain(var("LOCALAPPDATA").map(|l| l.join("programs")))
+        // Windows' own per-user and machine data (Start Menu, caches, credentials).
+        .chain(
+            ["APPDATA", "LOCALAPPDATA", "ProgramData"]
+                .iter()
+                .filter_map(|name| var(name))
+                .flat_map(|data| [data.join("microsoft"), data.join(r"microsoft\windows")]),
+        )
         .any(|shared| path == shared)
 }
 
@@ -109,7 +116,9 @@ pub fn is_protected_key(hive: Hive, path: &str) -> bool {
 }
 
 /// Lowercase, `/` as `\`, no `.` and no trailing separator: Windows paths compare this way.
-fn normalize(path: &Path) -> PathBuf {
+/// The form paths are compared in: lowercase, `\` separators, no `.` part, no trailing
+/// separator.
+pub fn normalize(path: &Path) -> PathBuf {
     let text = path.to_string_lossy().replace('/', "\\").to_lowercase();
     Path::new(&text)
         .components()
@@ -120,6 +129,14 @@ fn normalize(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refuses_windows_data_folders() {
+        let appdata = PathBuf::from(std::env::var_os("APPDATA").unwrap());
+        assert!(is_protected(&appdata.join("Microsoft")));
+        assert!(is_protected(&appdata.join(r"Microsoft\Windows\")));
+        assert!(!is_protected(&appdata.join(r"Microsoft\Teams")));
+    }
 
     #[test]
     fn refuses_system_and_shared_paths() {

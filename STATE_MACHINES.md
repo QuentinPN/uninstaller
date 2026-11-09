@@ -80,7 +80,11 @@ Le manifeste est réécrit par fichier temporaire + renommage ; une empreinte qu
 
 Côté broker, un tube créé par un autre processus que son parent donne le code 1 avant toute requête. Il ne quitte jamais pendant `Occupé`. Côté application (`commands.rs`), la session est gardée après la première opération et réutilisée tant que le broker vit ; un broker qui a quitté ou un appel en échec la ferme, et l'opération suivante en relance une (nouvelle invite). Invite refusée : `ElevationFailure::Refused`, autre échec : `Failed`. « Restaurer » et « Purger » ne passent par le broker qu'après un accès refusé sans élévation (`quarantine::needs_admin`) ; le broker rouvre le lot par son nom sous sa propre racine de quarantaine (même compte en élévation par consentement). `CreateRestorePoint` répond toujours (`Created`, `Skipped`, `Disabled` ou `Failed`) : un échec du point ne ferme pas la session. `ListRestorePoints` répond `None` si WMI échoue et `OpenSystemRestore` `false` si `rstrui.exe` ne démarre pas ; ni l'un ni l'autre ne ferme la session.
 
-### 2. Scan des restes · 4. Session de suivi d'installation · 5. Mode Chasseur
+### 2. Scan des restes
+
+Tranche 1 : `leftovers::Target::scan` est une fonction pure de lecture (aucun état, aucune écriture) ; relancer est toujours sûr. Les états (en cours, annulé, terminé, choix, mise en quarantaine) arrivent avec l'écran.
+
+### 4. Session de suivi d'installation · 5. Mode Chasseur
 
 À détailler en Phase 3-8, au même format.
 
