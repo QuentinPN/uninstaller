@@ -1,6 +1,7 @@
 //! Quarantine batches (ADR 0003, 0005): nothing is deleted, files and folders are moved
-//! into a batch folder whose manifest is written before each move, so a batch can be
-//! restored, or resumed after a crash.
+//! into a batch folder and registry keys saved there as `.reg` before they go. The
+//! manifest is written before each step, so a batch can be restored, or resumed after
+//! a crash.
 
 use std::fmt;
 use std::fs::{self, File};
@@ -11,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::protect;
+use super::registry::reg_file;
+use crate::win::registry::{self, Hive, View};
 
 const MANIFEST: &str = "manifest.json";
 /// Written in full, then renamed over the manifest (ADR 0005).
@@ -31,6 +34,8 @@ pub enum Error {
     /// A link, or a folder holding one, on another volume than the batch: a link is
     /// only ever renamed, never recreated.
     OtherVolume,
+    /// A key, subkey or value could not be read: nothing was saved or removed.
+    Unreadable,
     Io(io::Error),
 }
 
@@ -43,6 +48,7 @@ impl fmt::Display for Error {
             Self::Altered => f.write_str("moved file altered"),
             Self::Corrupt => f.write_str("manifest corrupt"),
             Self::OtherVolume => f.write_str("other volume"),
+            Self::Unreadable => f.write_str("key unreadable"),
             Self::Io(error) => error.fmt(f),
         }
     }
@@ -54,9 +60,9 @@ impl From<io::Error> for Error {
     }
 }
 
-/// Per item: `Pending` is written before the move, `Copied` once a copy across
-/// volumes is verified and before the origin is removed, `Moved` after, `Restored`
-/// once back at its origin (STATE_MACHINES.md).
+/// Per item: `Pending` is written before the move, `Copied` once a copy (across
+/// volumes, or a key's `.reg`) is verified and before the origin is removed, `Moved`
+/// after, `Restored` once back at its origin (STATE_MACHINES.md).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum State {
@@ -73,13 +79,16 @@ pub enum Kind {
     Folder,
     /// A symbolic link or junction, moved as the link itself.
     Link,
+    /// A registry key with its subkeys, kept as a `.reg` file. Its origin is the key as
+    /// regedit names it, in the 64-bit view (32-bit keys go through `WOW6432Node`).
+    Key,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
     pub origin: PathBuf,
     pub kind: Kind,
-    /// SHA-256 of a file's content; folders and links have none.
+    /// SHA-256 of a file's content or of a key's `.reg`; folders and links have none.
     pub hash: Option<String>,
     pub state: State,
 }
@@ -173,6 +182,45 @@ impl Batch {
         self.set_state(index, State::Moved)
     }
 
+    /// Saves the key named as regedit shows it (`HKEY_CURRENT_USER\Software\X`) into the
+    /// batch as a `.reg`, then removes it: `Pending` before the save, `Copied` once the
+    /// file is checked, `Moved` once the key is gone.
+    pub fn quarantine_key(&mut self, key: &str) -> Result<(), Error> {
+        let (hive, path) = Hive::parse(key).ok_or(Error::Protected)?;
+        if protect::is_protected_key(hive, path) {
+            return Err(Error::Protected);
+        }
+        let saved = reg_file::export(hive, path, View::Native64).ok_or(Error::Unreadable)?;
+        let hash = hex(&Sha256::digest(&saved));
+        let index = self.items.len();
+        self.items.push(Item {
+            origin: PathBuf::from(key),
+            kind: Kind::Key,
+            hash: Some(hash.clone()),
+            state: State::Pending,
+        });
+        self.save()?;
+        let stored = self.stored(index);
+        let written = write_synced(&stored, &saved)
+            .map_err(Error::from)
+            .and_then(|()| {
+                if file_hash(&stored)? == hash {
+                    Ok(())
+                } else {
+                    Err(Error::Altered)
+                }
+            });
+        if let Err(error) = written {
+            let _ = fs::remove_file(&stored);
+            self.items.pop();
+            self.save()?;
+            return Err(error);
+        }
+        self.set_state(index, State::Copied)?;
+        registry::delete_tree(hive, path, View::Native64)?;
+        self.set_state(index, State::Moved)
+    }
+
     /// Puts every moved item back, last moved first. Stops at the first item that
     /// cannot go back (its origin exists again, or its content changed); the items
     /// already restored stay restored.
@@ -183,7 +231,7 @@ impl Batch {
                 continue;
             }
             let stored = self.stored(index);
-            if fs::symlink_metadata(&item.origin).is_ok() {
+            if origin_exists(item)? {
                 return Err(Error::Exists);
             }
             if let Some(hash) = &item.hash
@@ -191,18 +239,9 @@ impl Batch {
             {
                 return Err(Error::Altered);
             }
-            if let Some(parent) = item.origin.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            match fs::rename(&stored, &item.origin) {
-                Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
-                    if let Err(error) = copy_verified(&stored, &item.origin) {
-                        let _ = remove_tree(&item.origin);
-                        return Err(error);
-                    }
-                    remove_tree(&stored)?;
-                }
-                renamed => renamed?,
+            match item.kind {
+                Kind::Key => import_key(item, &stored)?,
+                _ => put_back(&stored, &item.origin)?,
             }
             self.set_state(index, State::Restored)?;
         }
@@ -212,8 +251,9 @@ impl Batch {
     /// Finishes what a crash interrupted. Only the last item can be unsettled (one
     /// move at a time). `Pending` with its origin still there never left: a partial
     /// copy in the batch is dropped and so is the item; with only the batch holding
-    /// it, it is `Moved`. `Copied` has a verified copy: what remains of the origin
-    /// goes and it is `Moved`. Running it again changes nothing.
+    /// it, it is `Moved` once its content checks out. `Copied` has a verified copy:
+    /// what remains of the origin goes and it is `Moved`. Running it again changes
+    /// nothing.
     pub fn resume(&mut self) -> Result<(), Error> {
         let Some(index) = self
             .items
@@ -226,13 +266,13 @@ impl Batch {
             return Err(Error::Corrupt);
         }
         let stored = self.stored(index);
-        let origin = self.items[index].origin.clone();
+        let item = &self.items[index];
         let in_batch = fs::symlink_metadata(&stored).is_ok();
-        let at_origin = fs::symlink_metadata(&origin).is_ok();
-        match (self.items[index].state, at_origin, in_batch) {
+        let at_origin = origin_exists(item)?;
+        match (item.state, at_origin, in_batch) {
             (State::Copied, _, true) => {
                 if at_origin {
-                    remove_tree(&origin)?;
+                    remove_origin(item)?;
                 }
                 self.set_state(index, State::Moved)
             }
@@ -243,7 +283,14 @@ impl Batch {
                 self.items.pop();
                 self.save()
             }
-            (State::Pending, false, true) => self.set_state(index, State::Moved),
+            (State::Pending, false, true) => {
+                if let Some(hash) = &item.hash
+                    && file_hash(&stored)? != *hash
+                {
+                    return Err(Error::Corrupt);
+                }
+                self.set_state(index, State::Moved)
+            }
             _ => Err(Error::Corrupt),
         }
     }
@@ -265,11 +312,7 @@ impl Batch {
         };
         let next = self.dir.join(MANIFEST_NEXT);
         let text = serde_json::to_vec_pretty(&manifest).map_err(io::Error::other)?;
-        let mut file = File::create(&next)?;
-        file.write_all(&text)?;
-        // On disk before it replaces the manifest.
-        file.sync_all()?;
-        drop(file);
+        write_synced(&next, &text)?;
         fs::rename(next, self.dir.join(MANIFEST))?;
         Ok(())
     }
@@ -299,6 +342,82 @@ pub fn resume_all(root: &Path) -> usize {
                 .is_ok()
         })
         .count()
+}
+
+/// Writes `bytes` and waits until they are on disk.
+fn write_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut file = File::create(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+/// A key item's origin, split as `Hive::parse` does; a manifest naming no known hive
+/// is corrupt.
+fn origin_key(item: &Item) -> Result<(Hive, &str), Error> {
+    item.origin
+        .to_str()
+        .and_then(Hive::parse)
+        .ok_or(Error::Corrupt)
+}
+
+fn origin_exists(item: &Item) -> Result<bool, Error> {
+    Ok(match item.kind {
+        Kind::Key => {
+            let (hive, path) = origin_key(item)?;
+            registry::key_exists(hive, path, View::Native64)?
+        }
+        _ => fs::symlink_metadata(&item.origin).is_ok(),
+    })
+}
+
+fn remove_origin(item: &Item) -> Result<(), Error> {
+    match item.kind {
+        Kind::Key => {
+            let (hive, path) = origin_key(item)?;
+            registry::delete_tree(hive, path, View::Native64)?;
+        }
+        _ => remove_tree(&item.origin)?,
+    }
+    Ok(())
+}
+
+/// Moves `stored` back to `origin`, copying across volumes; a partial copy goes.
+fn put_back(stored: &Path, origin: &Path) -> Result<(), Error> {
+    if let Some(parent) = origin.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    match fs::rename(stored, origin) {
+        Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+            if let Err(error) = copy_verified(stored, origin) {
+                let _ = remove_tree(origin);
+                return Err(error);
+            }
+            remove_tree(stored)?;
+        }
+        renamed => renamed?,
+    }
+    Ok(())
+}
+
+/// Recreates a key from its `.reg`, which may only name the key and its subkeys; on
+/// failure what was recreated goes, since the key did not exist before.
+fn import_key(item: &Item, stored: &Path) -> Result<(), Error> {
+    let (hive, path) = origin_key(item)?;
+    let keys = reg_file::parse(&fs::read(stored)?).ok_or(Error::Corrupt)?;
+    let inside = |key: &reg_file::RegKey| {
+        let own = key.path.to_lowercase();
+        let root = path.to_lowercase();
+        key.hive.name() == hive.name() && (own == root || own.starts_with(&format!(r"{root}\")))
+    };
+    if !keys.iter().all(inside) {
+        return Err(Error::Corrupt);
+    }
+    if let Err(error) = reg_file::import(&keys, View::Native64) {
+        let _ = registry::delete_tree(hive, path, View::Native64);
+        return Err(error.into());
+    }
+    fs::remove_file(stored)?;
+    Ok(())
 }
 
 /// Copies a file or a folder tree across volumes (attributes and last write time
@@ -385,6 +504,81 @@ mod tests {
             b"[x]\ny=1"
         );
         assert!(reopened.items().iter().all(|i| i.state == State::Restored));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A test key (`HKCU\Software\UninstallerTest\...`, nothing else) with values
+    /// and a subkey; returns its regedit name and its `.reg` before any change.
+    fn test_registry_key(name: &str) -> (String, String, Vec<u8>) {
+        let path = registry::test_key::fresh(name);
+        let deeper =
+            registry::Key::create(Hive::CurrentUser, &format!(r"{path}\Sub"), View::Native64)
+                .unwrap();
+        for (name, kind, data) in [("", 1, vec![0x41, 0, 0, 0]), ("n", 4, vec![5, 0, 0, 0])] {
+            deeper
+                .set(&registry::Value {
+                    name: name.to_owned(),
+                    kind,
+                    data,
+                })
+                .unwrap();
+        }
+        drop(deeper);
+        let before = reg_file::export(Hive::CurrentUser, &path, View::Native64).unwrap();
+        (format!(r"HKEY_CURRENT_USER\{path}"), path, before)
+    }
+
+    #[test]
+    fn round_trip_saves_removes_and_reimports_a_key() {
+        let dir = sandbox("key");
+        let (key, path, before) = test_registry_key("quarantine");
+        let mut batch = Batch::create(&dir.join("quarantine"), "lot").unwrap();
+        batch.quarantine_key(&key).unwrap();
+        assert!(!registry::key_exists(Hive::CurrentUser, &path, View::Native64).unwrap());
+        assert_eq!(batch.items()[0].kind, Kind::Key);
+        assert_eq!(batch.items()[0].state, State::Moved);
+        assert_eq!(fs::read(batch.stored(0)).unwrap(), before);
+
+        assert!(matches!(batch.quarantine_key(&key), Err(Error::Unreadable)));
+        for refused in [r"HKEY_CURRENT_USER\Software", r"HKEY_CLASSES_ROOT\x", "x"] {
+            assert!(matches!(
+                batch.quarantine_key(refused),
+                Err(Error::Protected)
+            ));
+        }
+        assert_eq!(batch.items().len(), 1);
+
+        registry::Key::create(Hive::CurrentUser, &path, View::Native64).unwrap();
+        assert!(matches!(batch.restore(), Err(Error::Exists)));
+        registry::delete_tree(Hive::CurrentUser, &path, View::Native64).unwrap();
+        batch.restore().unwrap();
+        assert!(reg_file::export(Hive::CurrentUser, &path, View::Native64).unwrap() == before);
+        assert!(!batch.stored(0).exists());
+        assert_eq!(batch.items()[0].state, State::Restored);
+        registry::test_key::clear(&path);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn resume_removes_a_saved_key() {
+        let dir = sandbox("key-resume");
+        let (key, path, before) = test_registry_key("resume");
+        let mut batch = Batch::create(&dir.join("quarantine"), "lot").unwrap();
+        batch.items.push(Item {
+            origin: PathBuf::from(&key),
+            kind: Kind::Key,
+            hash: Some(hex(&Sha256::digest(&before))),
+            state: State::Copied,
+        });
+        batch.save().unwrap();
+        fs::write(batch.stored(0), &before).unwrap();
+        assert_eq!(resume_all(&dir.join("quarantine")), 1);
+        assert!(!registry::key_exists(Hive::CurrentUser, &path, View::Native64).unwrap());
+        let mut batch = Batch::open(&dir.join("quarantine\\lot")).unwrap();
+        assert_eq!(batch.items()[0].state, State::Moved);
+        batch.restore().unwrap();
+        assert!(reg_file::export(Hive::CurrentUser, &path, View::Native64).unwrap() == before);
+        registry::test_key::clear(&path);
         fs::remove_dir_all(dir).unwrap();
     }
 

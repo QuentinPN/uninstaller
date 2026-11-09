@@ -12,7 +12,7 @@ macro_rules! uninstall {
 }
 
 /// Every installed program has a subkey here (per hive and view).
-const UNINSTALL: &str = uninstall!("SOFTWARE");
+pub const UNINSTALL: &str = uninstall!("SOFTWARE");
 /// The same key as regedit shows it in the 32-bit view.
 const UNINSTALL_WOW32: &str = uninstall!(r"SOFTWARE\WOW6432Node");
 

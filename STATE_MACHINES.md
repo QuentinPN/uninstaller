@@ -49,12 +49,16 @@ Tailles calculées (tranche 5) : à chaque passage en Loaded, `computeSizes` par
 | Pending | renommage réussi (même volume) | Moved | manifeste réécrit |
 | Pending | autre volume : fichier ou arborescence copiés, chaque fichier vérifié par SHA-256 | Copied | manifeste réécrit, **puis** origine retirée |
 | Copied | origine retirée | Moved | manifeste réécrit |
+| — | `quarantine_key(clé)`, clé protégée ou racine inconnue | — | `Error::Protected`, manifeste inchangé |
+| — | `quarantine_key(clé)`, clé, sous-clé ou valeur illisible | — | `Error::Unreadable`, rien écrit ni retiré |
+| Pending | clé : `.reg` écrit dans le lot, vérifié par SHA-256 | Copied | manifeste réécrit, **puis** `RegDeleteTreeW` |
 | Pending | échec (lien, ou dossier contenant un lien, sur un autre volume : `OtherVolume` ; empreinte différente : `Altered` ; E/S) | — | copie partielle retirée du lot, ligne retirée, origine intacte |
 | Pending | démarrage (`resume_all`), origine présente | — | copie partielle éventuelle retirée du lot, ligne retirée |
 | Pending | démarrage, origine absente, élément dans le lot | Moved | manifeste réécrit |
 | Copied | démarrage, élément dans le lot | Moved | reste de l'origine retiré, manifeste réécrit |
 | Pending / Copied | démarrage, élément absent du lot (et origine absente pour Pending) | inchangé | `Error::Corrupt`, lot laissé tel quel |
 | Moved | `restore()`, origine libre, contenu intact | Restored | élément remis en place (même volume : renommage ; sinon copié, vérifié, puis retiré du lot ; à l'échec la copie partielle à l'origine est retirée), manifeste réécrit |
+| Moved | `restore()`, clé : `.reg` relu (clé et sous-clés seulement, sinon `Error::Corrupt`) et réimporté | Restored | `.reg` retiré du lot ; à l'échec la clé recréée est retirée |
 | Moved | `restore()`, origine occupée | Moved | `Error::Exists`, arrêt, rien écrasé |
 | Moved | `restore()`, empreinte différente | Moved | `Error::Altered`, arrêt |
 | Restored | `restore()` | Restored | ignoré |

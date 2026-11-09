@@ -1,8 +1,12 @@
-//! Paths that are never one program's own: drive roots, Windows, and the folders shared
-//! by every program or user. Every operation that walks or removes a program's files
-//! asks here first (SECURITY.md).
+//! Paths and registry keys that are never one program's own: drive roots, Windows, the
+//! folders shared by every program or user, and the keys that list every program's
+//! entries. Every operation that walks or removes a program's files or keys asks here
+//! first (SECURITY.md).
 
 use std::path::{Component, Path, PathBuf};
+
+use crate::core::registry::paths::UNINSTALL;
+use crate::win::registry::Hive;
 
 /// Environment variables naming a shared folder; the folder itself is protected.
 const SHARED_FOLDERS: [&str; 11] = [
@@ -48,6 +52,60 @@ pub fn is_protected(path: &Path) -> bool {
         // Per-user installs (lowercase: `var` normalizes).
         .chain(var("LOCALAPPDATA").map(|l| l.join("programs")))
         .any(|shared| path == shared)
+}
+
+/// Keys under `SOFTWARE` that hold entries of many programs: they and their parents are
+/// refused, a program's own subkey is not. A 32-bit view key (`WOW6432Node`) is checked
+/// as its native twin.
+const SHARED_KEYS: [&str; 18] = [
+    UNINSTALL,
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce",
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths",
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer",
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\Installer",
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\SharedDLLs",
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Approved",
+    r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+    r"SOFTWARE\Policies",
+    r"SOFTWARE\Classes\CLSID",
+    r"SOFTWARE\Classes\Interface",
+    r"SOFTWARE\Classes\TypeLib",
+    r"SOFTWARE\Classes\AppID",
+    r"SOFTWARE\Classes\*",
+    r"SOFTWARE\Classes\Directory",
+    r"SOFTWARE\Classes\Folder",
+    r"SOFTWARE\Classes\SystemFileAssociations",
+];
+
+/// True for a hive or an account root, anything outside `SOFTWARE` (`SYSTEM`, hardware,
+/// security, the user's settings), `SOFTWARE` itself, a key in `SHARED_KEYS` or one of
+/// its parents, or a malformed path (empty part, leading or trailing separator).
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "Phase 2: tested now, called by the next slices")
+)]
+pub fn is_protected_key(hive: Hive, path: &str) -> bool {
+    let path = path.to_lowercase();
+    let mut parts: Vec<&str> = path.split('\\').collect();
+    if parts.iter().any(|part| part.is_empty()) {
+        return true;
+    }
+    if matches!(hive, Hive::Users) {
+        // HKEY_USERS\<SID>\... reads like HKEY_CURRENT_USER\...
+        parts.remove(0);
+    }
+    if parts.get(1) == Some(&"wow6432node") {
+        parts.remove(1);
+    }
+    if parts.len() < 2 || parts[0] != "software" {
+        return true;
+    }
+    SHARED_KEYS.iter().any(|shared| {
+        let shared = shared.to_lowercase();
+        let shared: Vec<&str> = shared.split('\\').collect();
+        shared.starts_with(&parts)
+    })
 }
 
 /// Lowercase, `/` as `\`, no `.` and no trailing separator: Windows paths compare this way.
@@ -100,6 +158,54 @@ mod tests {
             r"D:\Games\Some Game".to_owned(),
         ] {
             assert!(!is_protected(Path::new(&path)), "{path}");
+        }
+    }
+
+    #[test]
+    fn refuses_shared_keys_and_their_parents() {
+        use crate::win::registry::Hive::{CurrentUser, LocalMachine, Users};
+        for (hive, path) in [
+            (LocalMachine, ""),
+            (LocalMachine, "SYSTEM"),
+            (LocalMachine, r"SYSTEM\CurrentControlSet\Services\X"),
+            (LocalMachine, "SOFTWARE"),
+            (LocalMachine, r"SOFTWARE\Microsoft"),
+            (LocalMachine, r"SOFTWARE\Microsoft\Windows"),
+            (
+                LocalMachine,
+                r"software\microsoft\windows\currentversion\uninstall",
+            ),
+            (LocalMachine, r"SOFTWARE\WOW6432Node"),
+            (
+                LocalMachine,
+                r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion",
+            ),
+            (LocalMachine, r"SOFTWARE\Classes\CLSID"),
+            (CurrentUser, "Environment"),
+            (CurrentUser, r"Control Panel\Desktop"),
+            (
+                CurrentUser,
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+            ),
+            (CurrentUser, "Software\\X\\"),
+            (CurrentUser, r"Software\\X"),
+            (Users, "S-1-5-21-1"),
+            (Users, r"S-1-5-21-1\Software"),
+        ] {
+            assert!(is_protected_key(hive, path), "{path}");
+        }
+        for (hive, path) in [
+            (LocalMachine, r"SOFTWARE\Vendor\App"),
+            (LocalMachine, r"SOFTWARE\WOW6432Node\Vendor"),
+            (
+                LocalMachine,
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\App",
+            ),
+            (LocalMachine, r"SOFTWARE\Classes\CLSID\{0}"),
+            (CurrentUser, r"Software\UninstallerTest"),
+            (Users, r"S-1-5-21-1\Software\Vendor"),
+        ] {
+            assert!(!is_protected_key(hive, path), "{path}");
         }
     }
 }

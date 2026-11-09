@@ -1,13 +1,18 @@
-//! Read-only registry access. Nothing here writes: changes go through the broker (ADR 0002).
+//! Registry access. Reading is free; writing is only for the quarantine, which checks
+//! `core::protect` and keeps a `.reg` copy first (ADR 0003). HKLM needs the broker
+//! (ADR 0002).
 
-use windows::Win32::Foundation::{ERROR_SUCCESS, FILETIME};
+use std::io;
+
+use windows::Win32::Foundation::{ERROR_SUCCESS, FILETIME, WIN32_ERROR};
 use windows::Win32::System::Registry::{
-    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, HKEY_USERS, KEY_READ, KEY_WOW64_32KEY,
-    KEY_WOW64_64KEY, REG_ROUTINE_FLAGS, REG_SAM_FLAGS, RRF_NOEXPAND, RRF_RT_REG_DWORD,
-    RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ, RegCloseKey, RegEnumKeyExW, RegEnumValueW, RegGetValueW,
-    RegOpenKeyExW, RegQueryInfoKeyW,
+    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, HKEY_USERS, KEY_ALL_ACCESS, KEY_READ,
+    KEY_WOW64_32KEY, KEY_WOW64_64KEY, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_ROUTINE_FLAGS,
+    REG_SAM_FLAGS, REG_VALUE_TYPE, RRF_NOEXPAND, RRF_RT_REG_DWORD, RRF_RT_REG_EXPAND_SZ,
+    RRF_RT_REG_SZ, RegCloseKey, RegCreateKeyExW, RegDeleteKeyExW, RegDeleteTreeW, RegEnumKeyExW,
+    RegEnumValueW, RegGetValueW, RegOpenKeyExW, RegQueryInfoKeyW, RegSetValueExW,
 };
-use windows::core::{HSTRING, PWSTR};
+use windows::core::{HSTRING, PCWSTR, PWSTR};
 
 #[derive(Clone, Copy, Debug)]
 pub enum Hive {
@@ -26,6 +31,33 @@ impl Hive {
             Hive::Users => "HKEY_USERS",
         }
     }
+
+    /// Splits a key as regedit shows it (`HKEY_CURRENT_USER\Software\X`) into its hive
+    /// and path; `None` for another root.
+    pub fn parse(key: &str) -> Option<(Hive, &str)> {
+        [Hive::LocalMachine, Hive::CurrentUser, Hive::Users]
+            .into_iter()
+            .find_map(|hive| {
+                let len = hive.name().len();
+                let root = key.get(..len)?;
+                let rest = &key[len..];
+                if !root.eq_ignore_ascii_case(hive.name()) {
+                    return None;
+                }
+                match rest.strip_prefix('\\') {
+                    Some(path) => Some((hive, path)),
+                    None => rest.is_empty().then_some((hive, "")),
+                }
+            })
+    }
+
+    fn root(self) -> HKEY {
+        match self {
+            Hive::LocalMachine => HKEY_LOCAL_MACHINE,
+            Hive::CurrentUser => HKEY_CURRENT_USER,
+            Hive::Users => HKEY_USERS,
+        }
+    }
 }
 
 /// Registry view: explicit, so a 32-bit or 64-bit build reads the same keys.
@@ -33,6 +65,15 @@ impl Hive {
 pub enum View {
     Native64,
     Wow32,
+}
+
+impl View {
+    fn flags(self) -> REG_SAM_FLAGS {
+        match self {
+            View::Native64 => KEY_WOW64_64KEY,
+            View::Wow32 => KEY_WOW64_32KEY,
+        }
+    }
 }
 
 /// One value as stored: its name (`""` for the default value), its type number and its raw
@@ -57,22 +98,12 @@ impl Key {
     /// Opens `path` under `hive` for reading (`""` opens the hive itself); `None` if it
     /// does not exist or is denied.
     pub fn open(hive: Hive, path: &str, view: View) -> Option<Self> {
-        let root = match hive {
-            Hive::LocalMachine => HKEY_LOCAL_MACHINE,
-            Hive::CurrentUser => HKEY_CURRENT_USER,
-            Hive::Users => HKEY_USERS,
-        };
-        let access = KEY_READ
-            | match view {
-                View::Native64 => KEY_WOW64_64KEY,
-                View::Wow32 => KEY_WOW64_32KEY,
-            };
-        open(root, path, access)
+        open(hive.root(), path, KEY_READ | view.flags()).ok()
     }
 
     /// Opens a direct subkey with the same view.
     pub fn subkey(&self, name: &str) -> Option<Self> {
-        open(self.handle, name, self.access)
+        open(self.handle, name, self.access).ok()
     }
 
     /// Names of the direct subkeys; one that cannot be read is skipped.
@@ -140,12 +171,14 @@ impl Key {
     pub fn last_write(&self) -> Option<u64> {
         self.info().map(|info| info.last_write)
     }
+}
 
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "Phase 2: tested now, called by the next slices")
+)]
+impl Key {
     /// Every subkey name, or `None` if one cannot be read.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Phase 2: tested now, called by the next slices")
-    )]
     pub fn all_subkey_names(&self) -> Option<Vec<String>> {
         let (names, count) = self.enum_subkeys()?;
         (names.len() == count as usize).then_some(names)
@@ -153,10 +186,6 @@ impl Key {
 
     /// Every value with its raw bytes, in the order the registry lists them, or `None`
     /// if one cannot be read (including one that grew since the key was measured).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Phase 2: tested now, called by the next slices")
-    )]
     pub fn values(&self) -> Option<Vec<Value>> {
         let info = self.info()?;
         let mut values = Vec::with_capacity(info.values as usize);
@@ -192,6 +221,47 @@ impl Key {
         Some(values)
     }
 
+    /// Opens `path`, creating it and its missing parents, for reading and writing.
+    pub fn create(hive: Hive, path: &str, view: View) -> io::Result<Self> {
+        let name = HSTRING::from(path);
+        let access = KEY_READ | KEY_WRITE | view.flags();
+        let mut handle = HKEY::default();
+        // SAFETY: the root is predefined and `handle` is a valid output; no class, security
+        // attributes or disposition are requested.
+        let status = unsafe {
+            RegCreateKeyExW(
+                hive.root(),
+                &name,
+                None,
+                PCWSTR::null(),
+                REG_OPTION_NON_VOLATILE,
+                access,
+                None,
+                &mut handle,
+                None,
+            )
+        };
+        check(status)?;
+        Ok(Key { handle, access })
+    }
+
+    /// Writes a value as stored, type and bytes unchanged.
+    pub fn set(&self, value: &Value) -> io::Result<()> {
+        let name = HSTRING::from(value.name.as_str());
+        // SAFETY: the key is live and open for writing; `value.data` is borrowed for the call.
+        check(unsafe {
+            RegSetValueExW(
+                self.handle,
+                &name,
+                None,
+                REG_VALUE_TYPE(value.kind),
+                Some(&value.data),
+            )
+        })
+    }
+}
+
+impl Key {
     fn get(
         &self,
         name: &str,
@@ -243,6 +313,46 @@ impl Key {
     }
 }
 
+/// Removes the key at `path` with its values and subkeys. Never a hive: an empty path is
+/// refused. The caller has checked `core::protect` and kept a `.reg` copy.
+pub fn delete_tree(hive: Hive, path: &str, view: View) -> io::Result<()> {
+    if path.is_empty() {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    let key = open(hive.root(), path, KEY_ALL_ACCESS | view.flags())?;
+    // SAFETY: a live key opened with every right; no subkey name, so only its contents go.
+    check(unsafe { RegDeleteTreeW(key.handle, PCWSTR::null()) })?;
+    drop(key);
+    delete_empty(hive, path, view)
+}
+
+/// Whether the key at `path` exists; an error other than "not found" (access denied)
+/// is not taken for an answer.
+pub fn key_exists(hive: Hive, path: &str, view: View) -> io::Result<bool> {
+    match open(hive.root(), path, KEY_READ | view.flags()) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// Removes a key that has no subkeys left (Windows refuses otherwise).
+fn delete_empty(hive: Hive, path: &str, view: View) -> io::Result<()> {
+    let (parent, name) = path.rsplit_once('\\').unwrap_or(("", path));
+    let parent = open(hive.root(), parent, KEY_READ | view.flags())?;
+    let name = HSTRING::from(name);
+    // SAFETY: `parent` is a live key; the view flag selects the same registry view.
+    check(unsafe { RegDeleteKeyExW(parent.handle, &name, view.flags().0, None) })
+}
+
+fn check(status: WIN32_ERROR) -> io::Result<()> {
+    if status == ERROR_SUCCESS {
+        Ok(())
+    } else {
+        Err(io::Error::from_raw_os_error(status.0 as i32))
+    }
+}
+
 impl Drop for Key {
     fn drop(&mut self) {
         // SAFETY: `handle` was opened by RegOpenKeyExW and is closed exactly once, here.
@@ -275,17 +385,39 @@ struct KeyInfo {
     last_write: u64,
 }
 
-fn open(parent: HKEY, path: &str, access: REG_SAM_FLAGS) -> Option<Key> {
+fn open(parent: HKEY, path: &str, access: REG_SAM_FLAGS) -> io::Result<Key> {
     let path = HSTRING::from(path);
     let mut handle = HKEY::default();
     // SAFETY: `parent` is a predefined root or a live key; `handle` is a valid output.
-    let status = unsafe { RegOpenKeyExW(parent, &path, None, access, &mut handle) };
-    (status == ERROR_SUCCESS).then_some(Key { handle, access })
+    check(unsafe { RegOpenKeyExW(parent, &path, None, access, &mut handle) })?;
+    Ok(Key { handle, access })
+}
+
+/// Test keys live under `HKCU\Software\UninstallerTest` only, one per test and
+/// process, so tests never touch anything else.
+#[cfg(test)]
+pub mod test_key {
+    use super::{Hive, View, delete_empty, delete_tree};
+
+    const PARENT: &str = r"Software\UninstallerTest";
+
+    /// A fresh path for `name`, cleared of a failed run's leftovers.
+    pub fn fresh(name: &str) -> String {
+        let path = format!(r"{PARENT}\{name}-{}", std::process::id());
+        let _ = delete_tree(Hive::CurrentUser, &path, View::Native64);
+        path
+    }
+
+    /// Removes the test key, and the parent once no other test uses it.
+    pub fn clear(path: &str) {
+        let _ = delete_tree(Hive::CurrentUser, path, View::Native64);
+        let _ = delete_empty(Hive::CurrentUser, PARENT, View::Native64);
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Hive, Key, View};
+    use super::{Hive, Key, Value, View, delete_tree, test_key};
 
     /// Present on every Windows install, readable without elevation.
     const CURRENT_VERSION: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
@@ -302,6 +434,37 @@ mod tests {
         assert!(key.string("NoSuchValue").is_none());
         assert!(key.last_write().is_some());
         assert!(!key.subkey_names().is_empty());
+    }
+
+    #[test]
+    fn parses_regedit_roots() {
+        assert!(matches!(
+            Hive::parse(r"hkey_current_user\Software\X"),
+            Some((Hive::CurrentUser, r"Software\X"))
+        ));
+        assert!(matches!(Hive::parse("HKEY_USERS"), Some((Hive::Users, ""))));
+        assert!(Hive::parse(r"HKEY_CURRENT_USERS\X").is_none());
+        assert!(Hive::parse(r"HKEY_CLASSES_ROOT\X").is_none());
+    }
+
+    #[test]
+    fn creates_writes_and_deletes_a_tree() {
+        let path = test_key::fresh("tree");
+        let key = Key::create(Hive::CurrentUser, &format!(r"{path}\a\b"), View::Native64).unwrap();
+        key.set(&Value {
+            name: "n".to_owned(),
+            kind: 4,
+            data: vec![7, 0, 0, 0],
+        })
+        .unwrap();
+        drop(key);
+        let read = Key::open(Hive::CurrentUser, &format!(r"{path}\a\b"), View::Native64).unwrap();
+        assert_eq!(read.dword("n"), Some(7));
+        drop(read);
+        assert!(delete_tree(Hive::CurrentUser, "", View::Native64).is_err());
+        delete_tree(Hive::CurrentUser, &path, View::Native64).unwrap();
+        assert!(Key::open(Hive::CurrentUser, &path, View::Native64).is_none());
+        test_key::clear(&path);
     }
 
     #[test]
