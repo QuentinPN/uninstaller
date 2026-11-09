@@ -10,8 +10,10 @@ use std::io::{self, ErrorKind, Read, Write};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use crate::core::registry::paths::SYSTEM_RESTORE;
 use crate::win::process::{self, Process};
-use crate::win::{pipe, token};
+use crate::win::registry::{Hive, Key, View};
+use crate::win::{pipe, restore, token};
 
 /// Both ends must speak the same version: the broker is the same binary, so a
 /// mismatch means something else is on the pipe.
@@ -28,13 +30,30 @@ const IDLE: Duration = Duration::from_secs(5 * 60);
 pub enum Request {
     /// Checks the channel and the version right after connecting.
     Ping,
+    /// A system restore point named `description`, before a change (SECURITY.md 4).
+    CreateRestorePoint { description: String },
 }
 
 /// The broker's answer to one `Request`.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum Reply {
     /// Whether the broker really runs with administrator rights.
-    Pong { elevated: bool },
+    Pong {
+        elevated: bool,
+    },
+    RestorePoint(RestorePoint),
+}
+
+/// What became of a `CreateRestorePoint`.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub enum RestorePoint {
+    Created,
+    /// Windows created nothing: another point is more recent than its minimum
+    /// interval (`SystemRestorePointCreationFrequency`, 24 h by default).
+    Skipped,
+    /// System Restore is turned off.
+    Disabled,
+    Failed,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -138,7 +157,29 @@ fn answer(request: Request) -> Reply {
         Request::Ping => Reply::Pong {
             elevated: token::is_elevated(),
         },
+        Request::CreateRestorePoint { description } => {
+            Reply::RestorePoint(restore_point(&description))
+        }
     }
+}
+
+/// Creates the point, telling a skipped one by the last point's number, which Windows
+/// raises with each point it really creates.
+fn restore_point(description: &str) -> RestorePoint {
+    if description.chars().any(char::is_control) {
+        return RestorePoint::Failed;
+    }
+    let before = last_restore_index();
+    match restore::create(description) {
+        Ok(_) if before.is_some() && last_restore_index() == before => RestorePoint::Skipped,
+        Ok(_) => RestorePoint::Created,
+        Err(e) if restore::is_disabled(&e) => RestorePoint::Disabled,
+        Err(_) => RestorePoint::Failed,
+    }
+}
+
+fn last_restore_index() -> Option<u32> {
+    Key::open(Hive::LocalMachine, SYSTEM_RESTORE, View::Native64)?.dword("LastIndex")
 }
 
 /// When the broker last finished a request; `None` while one runs, so it never quits
@@ -268,9 +309,7 @@ mod tests {
         let server = pipe::Server::create(&name).expect("create");
         let broker = std::thread::spawn(move || {
             let mut channel = server.accept().expect("accept");
-            serve(&mut channel, |Request::Ping| Reply::Pong {
-                elevated: false,
-            })
+            serve(&mut channel, |_| Reply::Pong { elevated: false })
         });
         let mut app = pipe::connect(&name).expect("connect");
         for _ in 0..2 {
@@ -346,24 +385,46 @@ mod tests {
         );
     }
 
-    /// The real elevated broker: shows the UAC prompt, so run by hand after
-    /// `cargo build`, and accept the prompt.
-    #[test]
-    #[ignore = "administrateur : affiche l'invite UAC"]
-    fn elevated_broker_answers() {
+    /// The real elevated broker, `uninstaller.exe` next to the test binary: shows
+    /// the UAC prompt, so run by hand after `cargo build`, and accept the prompt.
+    fn elevated_client() -> Client {
         let exe = std::env::current_exe().expect("exe");
         let app = exe
             .parent()
             .and_then(|deps| deps.parent())
             .expect("target dir")
             .join("uninstaller.exe");
-        let mut client =
-            Client::launch(|name| process::run_as_admin(&app, &format!("--broker {name}")))
-                .expect("launch");
+        Client::launch(|name| process::run_as_admin(&app, &format!("--broker {name}")))
+            .expect("launch")
+    }
+
+    #[test]
+    #[ignore = "administrateur : affiche l'invite UAC"]
+    fn elevated_broker_answers() {
         assert_eq!(
-            client.call(&Request::Ping).expect("call"),
+            elevated_client().call(&Request::Ping).expect("call"),
             Reply::Pong { elevated: true }
         );
+    }
+
+    /// Creates a real restore point on this PC: only with the user's consent.
+    #[test]
+    #[ignore = "administrateur : crée un vrai point de restauration"]
+    fn elevated_broker_creates_a_restore_point() {
+        let before = last_restore_index();
+        let request = Request::CreateRestorePoint {
+            description: "Uninstaller : essai du broker".into(),
+        };
+        assert_eq!(
+            elevated_client().call(&request).expect("call"),
+            Reply::RestorePoint(RestorePoint::Created)
+        );
+        assert_ne!(last_restore_index(), before);
+    }
+
+    #[test]
+    fn control_characters_never_reach_windows() {
+        assert_eq!(restore_point("a\nb"), RestorePoint::Failed);
     }
 
     #[test]

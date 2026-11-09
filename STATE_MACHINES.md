@@ -78,7 +78,7 @@ Le manifeste est réécrit par fichier temporaire + renommage ; une empreinte qu
 | Prêt | tube fermé par l'application | Terminé (code 0) |
 | Prêt | 5 min sans requête | Terminé (code 0) |
 
-Côté broker, un tube créé par un autre processus que son parent donne le code 1 avant toute requête. Il ne quitte jamais pendant `Occupé`.
+Côté broker, un tube créé par un autre processus que son parent donne le code 1 avant toute requête. Il ne quitte jamais pendant `Occupé`. `CreateRestorePoint` répond toujours (`Created`, `Skipped`, `Disabled` ou `Failed`) : un échec du point ne ferme pas la session.
 
 ### 2. Scan des restes · 4. Session de suivi d'installation · 5. Mode Chasseur
 

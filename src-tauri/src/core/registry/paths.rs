@@ -11,6 +11,9 @@ macro_rules! uninstall {
     };
 }
 
+/// System Restore settings and state, under HKLM (`LastIndex`: the last point's number).
+pub const SYSTEM_RESTORE: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore";
+
 /// Every installed program has a subkey here (per hive and view).
 pub const UNINSTALL: &str = uninstall!("SOFTWARE");
 /// The same key as regedit shows it in the 32-bit view.

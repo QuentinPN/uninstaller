@@ -9,4 +9,5 @@ pub mod icon;
 pub mod pipe;
 pub mod process;
 pub mod registry;
+pub mod restore;
 pub mod token;
