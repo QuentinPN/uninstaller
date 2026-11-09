@@ -1,6 +1,6 @@
 //! The only IPC boundary. Every command validates its inputs.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::process::Command;
 
@@ -8,6 +8,7 @@ use tauri::ipc::Channel;
 
 use crate::core::inventory::{self, Program};
 use crate::core::sizes::{self, ProgramSize};
+use crate::win::dialog::{self, SaveAs};
 
 /// Facts about the running process, shown in the title bar.
 #[derive(Serialize, Type)]
@@ -51,6 +52,63 @@ pub async fn compute_sizes(on_sizes: Channel<Vec<ProgramSize>>) {
         });
     })
     .await;
+}
+
+/// File types of a list export (F19).
+#[derive(Clone, Copy, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum ExportFormat {
+    Html,
+    Csv,
+    Txt,
+}
+
+impl ExportFormat {
+    fn extension(self) -> &'static str {
+        match self {
+            ExportFormat::Html => "html",
+            ExportFormat::Csv => "csv",
+            ExportFormat::Txt => "txt",
+        }
+    }
+}
+
+/// An export built by the UI (it has the labels, the order and the measured sizes),
+/// with the texts of the save dialog.
+#[derive(Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct Export {
+    pub format: ExportFormat,
+    pub content: String,
+    pub dialog_title: String,
+    pub file_name: String,
+    pub type_name: String,
+}
+
+/// Asks where to save the export, then writes it. The path only ever comes from the
+/// system dialog, never from the UI. `Ok(None)` when the user cancels.
+#[tauri::command]
+#[specta::specta]
+pub async fn save_export(
+    window: tauri::WebviewWindow,
+    request: Export,
+) -> Result<Option<String>, String> {
+    let owner = window.hwnd().map_or(0, |hwnd| hwnd.0 as isize);
+    tauri::async_runtime::spawn_blocking(move || {
+        let save_as = SaveAs {
+            title: &request.dialog_title,
+            file_name: &request.file_name,
+            type_name: &request.type_name,
+            extension: request.format.extension(),
+        };
+        let Some(path) = dialog::ask_save_path(owner, save_as) else {
+            return Ok(None);
+        };
+        std::fs::write(&path, request.content).map_err(|e| e.to_string())?;
+        Ok(Some(path.display().to_string()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

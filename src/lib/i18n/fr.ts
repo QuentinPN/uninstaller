@@ -40,6 +40,16 @@ export const fr = {
     columnHead: { date: "Installé le" } as Partial<Record<string, string>>,
     sortHint: (field: string) =>
       `Trier par ${field.toLowerCase()} ; recliquer inverse l'ordre`,
+    export: {
+      button: "Exporter",
+      /** File types offered, in the menu and the save dialog. */
+      formats: { html: "Page HTML", csv: "Tableur CSV", txt: "Texte" },
+      dialogTitle: "Exporter la liste des programmes",
+      fileName: (date: string) => `Programmes ${date}`,
+      exportedOn: (date: string) => `exporté le ${date}`,
+      saved: (path: string) => `Liste exportée : ${path}`,
+      failed: "L'export n'a pas pu être enregistré",
+    },
     groupBy: "Regrouper",
     group: {
       none: "Aucun",

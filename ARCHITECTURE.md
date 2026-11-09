@@ -39,6 +39,10 @@ Tauri 2 + Svelte 5 retenu face à egui/eframe et fastframe : l'application n'est
 
 Proposition : l'application démarre non élevée (lecture, recherche, export). Les opérations qui exigent l'administrateur passent par un **broker élevé** lancé à la demande (`uninstaller-broker.exe`, même binaire avec argument) qui parle par tube nommé ACL limité à l'utilisateur, protocole versionné et sérialisé, liste fermée d'opérations. La WebView n'est jamais élevée.
 
+## Export (F19)
+
+Le contenu (HTML, CSV, TXT) est construit côté UI (`src/lib/programs/export.ts`) : elle seule connaît l'ordre affiché, les filtres, les tailles mesurées et les libellés français. Rust ne fait qu'ouvrir la boîte « Enregistrer sous » (`win/dialog.rs`, `IFileSaveDialog` sur un thread COM STA dédié) et écrire le fichier ; pas de module `core/export`. L'impression directe est reportée : la CSP interdit les styles en ligne d'un `iframe` ; la page HTML exportée s'imprime depuis le navigateur.
+
 ## Données locales
 
 `%LOCALAPPDATA%\Uninstaller\` : `quarantine/` (fichiers déplacés + `manifest.json` signé par hash), `backups/` (`.reg`), `traces/` (journaux de suivi d'installation), `cache/icons/`, `settings.json`. Mode portable : même arborescence à côté de l'exécutable.

@@ -23,6 +23,13 @@ export function formatSize(kib: number): string {
   return `${decimal.format(value)} ${UNITS[unit]}`;
 }
 
+/** A local date as `yyyy-mm-dd`, the form install dates use. */
+export function isoDate(date: Date): string {
+  return [date.getFullYear(), date.getMonth() + 1, date.getDate()]
+    .map((n) => String(n).padStart(2, "0"))
+    .join("-");
+}
+
 /** `yyyy-mm-dd` to "15/03/2024". */
 export function formatDate(iso: string): string {
   return shortDate.format(new Date(`${iso}T00:00:00Z`));

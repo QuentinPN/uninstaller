@@ -14,7 +14,8 @@ fn ipc() -> Builder<tauri::Wry> {
         commands::app_info,
         commands::list_programs,
         commands::compute_sizes,
-        commands::open_install_folder
+        commands::open_install_folder,
+        commands::save_export
     ])
 }
 

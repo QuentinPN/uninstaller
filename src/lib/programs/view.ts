@@ -1,7 +1,7 @@
 // What the Programs screen shows: default filter (F1), search, sort and grouping (F2),
 // recent and orphan filters (F3).
 
-import { formatMonth } from "../format";
+import { formatMonth, isoDate } from "../format";
 import { fr } from "../i18n/fr";
 import type { Kind, Program } from "../ipc/bindings";
 
@@ -157,14 +157,13 @@ export const RECENT_DAYS = 7;
 
 /** Earliest install date (`yyyy-mm-dd`, local time) still recent on `today`. */
 export function recentSince(today: Date): string {
-  const day = new Date(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate() - RECENT_DAYS,
+  return isoDate(
+    new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate() - RECENT_DAYS,
+    ),
   );
-  return [day.getFullYear(), day.getMonth() + 1, day.getDate()]
-    .map((n) => String(n).padStart(2, "0"))
-    .join("-");
 }
 
 /** Dates are `yyyy-mm-dd`, so they compare as text. */

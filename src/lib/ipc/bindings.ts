@@ -20,6 +20,11 @@ export const commands = {
 	 *  the folder is read back from the registry. False if it no longer exists.
 	 */
 	openInstallFolder: (id: string) => __TAURI_INVOKE<boolean>("open_install_folder", { id }),
+	/**
+	 *  Asks where to save the export, then writes it. The path only ever comes from the
+	 *  system dialog, never from the UI. `Ok(None)` when the user cancels.
+	 */
+	saveExport: (request: Export) => typedError<string | null, string>(__TAURI_INVOKE("save_export", { request })),
 };
 
 /* Types */
@@ -28,6 +33,21 @@ export type AppInfo = {
 	/**  Running with an administrator token (ADR 0002: normally false). */
 	elevated: boolean,
 };
+
+/**
+ *  An export built by the UI (it has the labels, the order and the measured sizes),
+ *  with the texts of the save dialog.
+ */
+export type Export = {
+	format: ExportFormat,
+	content: string,
+	dialogTitle: string,
+	fileName: string,
+	typeName: string,
+};
+
+/**  File types of a list export (F19). */
+export type ExportFormat = "html" | "csv" | "txt";
 
 /**  What the entry is. Only `App` is shown by default (F1). */
 export type Kind = "app" | 
@@ -110,4 +130,14 @@ export type Scope =
 "user" | 
 /**  HKU: installed for another account of this PC, whose hive is loaded. */
 "otherUser";
+
+/* Tauri Specta runtime */
+async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; data: T } | { status: "error"; error: E }> {
+    try {
+        return { status: "ok", data: await result };
+    } catch (e) {
+        if (e instanceof Error) throw e;
+        return { status: "error", error: e as any };
+    }
+}
 

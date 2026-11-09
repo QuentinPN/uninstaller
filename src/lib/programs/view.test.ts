@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Program } from "../ipc/bindings";
+import { program } from "./fixture";
 import {
   type Filter,
   type GroupKey,
@@ -32,30 +33,6 @@ function view(
     shown,
     filters,
     recentSince: "2024-04-28",
-  };
-}
-
-function program(name: string, extra: Partial<Program> = {}): Program {
-  return {
-    id: `hklm64\\${name}`,
-    name,
-    publisher: null,
-    version: null,
-    installDate: null,
-    estimatedSizeKib: null,
-    installLocation: null,
-    uninstallString: null,
-    quietUninstallString: null,
-    displayIcon: null,
-    url: null,
-    comments: null,
-    msi: false,
-    registryKey: `HKEY_LOCAL_MACHINE\\${name}`,
-    scope: "machine64",
-    profile: null,
-    kind: "app",
-    orphan: false,
-    ...extra,
   };
 }
 

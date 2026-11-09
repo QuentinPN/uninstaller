@@ -2,13 +2,19 @@
 import { Channel } from "@tauri-apps/api/core";
 import { onMount } from "svelte";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
-import { formatDate, formatSize } from "../format";
+import { formatDate, formatSize, isoDate } from "../format";
 import { fr } from "../i18n/fr";
-import { commands, type Program, type ProgramSize } from "../ipc/bindings";
+import {
+  commands,
+  type ExportFormat,
+  type Program,
+  type ProgramSize,
+} from "../ipc/bindings";
 import EmptyState from "../ui/EmptyState.svelte";
 import { EMPTY_SELECTION, type Selection } from "../ui/listNav";
 import VirtualList from "../ui/VirtualList.svelte";
 import AppIcon from "./AppIcon.svelte";
+import { EXPORT_FORMATS, exportContent } from "./export";
 import ProgramDetails from "./ProgramDetails.svelte";
 import {
   COLUMNS,
@@ -84,6 +90,24 @@ const tracks = $derived(
     ...columns.map((c) => COLUMN_WIDTH[c]),
   ].join(" "),
 );
+/** Outcome of the last export, until the next one. */
+let exported = $state<{ text: string; failed: boolean } | null>(null);
+
+/** Saves the list as shown (filters, search, order) where the user chooses. */
+async function exportAs(format: ExportFormat) {
+  const t = fr.programs.export;
+  const now = new Date();
+  const result = await commands.saveExport({
+    format,
+    content: exportContent(format, visible, sizes, now),
+    dialogTitle: t.dialogTitle,
+    fileName: t.fileName(isoDate(now)),
+    typeName: `${t.formats[format]} (*.${format})`,
+  });
+  if (result.status === "error") exported = { text: t.failed, failed: true };
+  else if (result.data)
+    exported = { text: t.saved(result.data), failed: false };
+}
 let detailsOpen = $state(false);
 let list = $state<VirtualList<Program>>();
 
@@ -171,6 +195,11 @@ onMount(load);
     {#if sizing}
       <p class="summary" role="status">{fr.programs.sizing}</p>
     {/if}
+    {#if exported}
+      <p class="summary exported" class:failed={exported.failed} role="status">
+        {exported.text}
+      </p>
+    {/if}
   {/if}
 </header>
 
@@ -199,8 +228,10 @@ onMount(load);
       {/each}
     </select>
   </label>
-  <button class="menu-button" popovertarget="columns-menu">{fr.programs.columns}</button>
-  <div class="menu" id="columns-menu" popover>
+  <button class="menu-button" style:anchor-name="--columns" popovertarget="columns-menu">
+    {fr.programs.columns}
+  </button>
+  <div class="menu" id="columns-menu" style:position-anchor="--columns" popover>
     {#each COLUMNS as column (column)}
       <label class="menu-item">
         <input
@@ -210,6 +241,21 @@ onMount(load);
         />
         {fr.programs.field[column]}
       </label>
+    {/each}
+  </div>
+  <button class="menu-button" style:anchor-name="--export" popovertarget="export-menu">
+    {fr.programs.export.button}
+  </button>
+  <div class="menu" id="export-menu" style:position-anchor="--export" popover>
+    {#each EXPORT_FORMATS as format (format)}
+      <button
+        class="menu-item"
+        popovertarget="export-menu"
+        popovertargetaction="hide"
+        onclick={() => exportAs(format)}
+      >
+        {fr.programs.export.formats[format]}
+      </button>
     {/each}
   </div>
   <div class="toggles push" role="group" aria-label={fr.programs.filter}>
@@ -490,8 +536,16 @@ onMount(load);
     white-space: nowrap;
     text-overflow: ellipsis;
   }
+  .exported {
+    overflow: hidden;
+    min-width: 0;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .failed {
+    color: var(--color-danger);
+  }
   .menu-button {
-    anchor-name: --columns;
     padding: var(--space-1) var(--space-3);
     border: none;
     border-radius: var(--radius-pill);
@@ -503,8 +557,8 @@ onMount(load);
   .menu-button:hover {
     background: var(--fill-hover);
   }
+  /* Anchored to its button (`position-anchor` set on each menu). */
   .menu {
-    position-anchor: --columns;
     inset: auto;
     top: anchor(bottom);
     left: anchor(left);
@@ -521,6 +575,10 @@ onMount(load);
   }
   .menu-item {
     display: flex;
+    width: 100%;
+    border: none;
+    background: none;
+    color: inherit;
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-1) var(--space-2);
