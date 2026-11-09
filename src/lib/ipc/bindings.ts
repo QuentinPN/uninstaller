@@ -10,6 +10,11 @@ export const commands = {
 	 *  main thread.
 	 */
 	listPrograms: () => __TAURI_INVOKE<Program_Serialize[]>("list_programs"),
+	/**
+	 *  Opens a program's install folder in Explorer. Takes the opaque id, never a path:
+	 *  the folder is read back from the registry. False if it no longer exists.
+	 */
+	openInstallFolder: (id: string) => __TAURI_INVOKE<boolean>("open_install_folder", { id }),
 };
 
 /* Types */
@@ -46,6 +51,8 @@ export type Program_Deserialize = {
 	comments?: string | null,
 	/**  Managed by Windows Installer (the key name is the MSI product code). */
 	msi: boolean,
+	/**  Full key path, as regedit shows it. */
+	registryKey: string,
 	scope: Scope,
 	kind: Kind,
 };
@@ -68,6 +75,8 @@ export type Program_Serialize = {
 	comments: string | null,
 	/**  Managed by Windows Installer (the key name is the MSI product code). */
 	msi: boolean,
+	/**  Full key path, as regedit shows it. */
+	registryKey: string,
 	scope: Scope,
 	kind: Kind,
 };

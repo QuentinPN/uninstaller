@@ -32,6 +32,8 @@ Invariants : une seule tâche active par programme ; rien n'est supprimé avant 
 | Loading | `listPrograms` rejeté | Failed | cause + « Réessayer » |
 | Failed | Réessayer | Loading | squelettes de lignes |
 
+Panneau de détails (tranche 2) : fermé → ouvert par Espace ou double-clic sur la ligne sélectionnée ; ouvert, il suit la sélection ; Échap ou ✕ le ferme et rend le focus à la liste. Si le programme sélectionné disparaît (rechargement), le panneau se ferme de lui-même.
+
 Une source de registre illisible (clé absente, accès refusé) est ignorée côté Rust sans faire échouer l'ensemble. Tailles calculées et icônes en streaming : à ajouter ici avec leur tranche.
 
 ### 2. Scan des restes · 3. Lot en quarantaine (`Active → Restoring → Restored` / `Purging → Purged`) · 4. Session de suivi d'installation · 5. Mode Chasseur

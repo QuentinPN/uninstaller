@@ -2,6 +2,8 @@
 
 use serde::Serialize;
 use specta::Type;
+use std::path::PathBuf;
+use std::process::Command;
 
 use crate::core::inventory::{self, Program};
 
@@ -19,6 +21,22 @@ pub struct AppInfo {
 #[specta::specta]
 pub async fn list_programs() -> Vec<Program> {
     inventory::scan()
+}
+
+/// Opens a program's install folder in Explorer. Takes the opaque id, never a path:
+/// the folder is read back from the registry. False if it no longer exists.
+#[tauri::command]
+#[specta::specta]
+pub async fn open_install_folder(id: String) -> bool {
+    let Some(folder) = inventory::find(&id)
+        .and_then(|p| p.install_location)
+        .map(|l| PathBuf::from(l.trim_matches('"')))
+        .filter(|f| f.is_dir())
+    else {
+        return false;
+    };
+    // Explorer hands the folder to the running shell and exits at once.
+    Command::new("explorer.exe").arg(folder).status().is_ok()
 }
 
 #[tauri::command]

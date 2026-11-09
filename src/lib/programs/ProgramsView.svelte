@@ -5,6 +5,7 @@ import { fr } from "../i18n/fr";
 import { commands, type Program } from "../ipc/bindings";
 import EmptyState from "../ui/EmptyState.svelte";
 import VirtualList from "../ui/VirtualList.svelte";
+import ProgramDetails from "./ProgramDetails.svelte";
 import { type SortKey, totalSizeKib, visiblePrograms } from "./view";
 
 const SORT_KEYS: SortKey[] = ["name", "size", "date"];
@@ -15,6 +16,13 @@ let programs = $state<Program[] | null>(null);
 let failed = $state(false);
 let query = $state("");
 let sort = $state<SortKey>("name");
+let selected = $state<string | null>(null);
+let detailsOpen = $state(false);
+let list = $state<VirtualList<Program>>();
+
+const details = $derived(
+  detailsOpen ? programs?.find((p) => p.id === selected) : undefined,
+);
 
 const visible = $derived(
   programs ? visiblePrograms(programs, query, sort) : [],
@@ -27,6 +35,17 @@ function load() {
     (list) => (programs = list),
     () => (failed = true),
   );
+}
+
+function closeDetails() {
+  detailsOpen = false;
+  list?.focus();
+}
+
+function onkeydown(event: KeyboardEvent) {
+  if (event.code !== "Escape" || !detailsOpen) return;
+  event.preventDefault();
+  closeDetails();
 }
 
 onMount(load);
@@ -60,6 +79,10 @@ onMount(load);
   </label>
 </div>
 
+<!-- Escape bubbles up from the list or the panel. -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="body" {onkeydown}>
+<div class="content">
 {#if failed}
   <EmptyState title={fr.programs.error.title} text={fr.programs.error.text}>
     <button class="retry" onclick={load}>{fr.programs.error.retry}</button>
@@ -73,7 +96,14 @@ onMount(load);
 {:else if visible.length === 0}
   <EmptyState title={fr.programs.noResults.title} text={fr.programs.noResults.text} />
 {:else}
-  <VirtualList items={visible} key={(p) => p.id} label={fr.programs.list}>
+  <VirtualList
+    bind:this={list}
+    bind:selected
+    items={visible}
+    key={(p) => p.id}
+    label={fr.programs.list}
+    onopen={() => (detailsOpen = true)}
+  >
     {#snippet row(p: Program)}
       <div class="program">
         <div class="names">
@@ -91,8 +121,25 @@ onMount(load);
     {/snippet}
   </VirtualList>
 {/if}
+</div>
+{#if details}
+  <ProgramDetails program={details} onclose={closeDetails} />
+{/if}
+</div>
 
 <style>
+  .body {
+    display: flex;
+    flex: 1;
+    gap: var(--space-4);
+    min-height: 0;
+  }
+  .content {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
   .head {
     display: flex;
     align-items: baseline;
@@ -156,11 +203,6 @@ onMount(load);
     gap: var(--space-4);
     height: 100%;
     padding: 0 var(--space-3);
-    border-radius: var(--radius-sm);
-    transition: background var(--motion-fast);
-  }
-  .program:hover {
-    background: var(--fill-hover);
   }
   .names {
     display: flex;

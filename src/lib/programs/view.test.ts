@@ -17,6 +17,7 @@ function program(name: string, extra: Partial<Program> = {}): Program {
     url: null,
     comments: null,
     msi: false,
+    registryKey: `HKEY_LOCAL_MACHINE\\${name}`,
     scope: "machine64",
     kind: "app",
     ...extra,

@@ -42,6 +42,8 @@
   /* Program list: fixed row height keeps virtualization exact. */
   --row-height: 44px;
   --icon-size: 28px;
+  /* Details panel beside the list. */
+  --panel-width: 340px;
   --motion-fast: 120ms;
   --motion-base: 200ms;
   --motion-lift: 320ms;

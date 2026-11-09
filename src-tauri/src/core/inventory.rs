@@ -4,7 +4,7 @@ use serde::Serialize;
 use specta::Type;
 use std::collections::HashSet;
 
-use crate::core::registry::paths::{UNINSTALL, UNINSTALL_SOURCES};
+use crate::core::registry::paths::{UNINSTALL, UNINSTALL_SOURCES, shown_key};
 use crate::win::registry::Key;
 
 /// Where the program is registered.
@@ -60,6 +60,8 @@ pub struct Program {
     pub comments: Option<String>,
     /// Managed by Windows Installer (the key name is the MSI product code).
     pub msi: bool,
+    /// Full key path, as regedit shows it.
+    pub registry_key: String,
     pub scope: Scope,
     pub kind: Kind,
 }
@@ -99,6 +101,20 @@ pub fn scan() -> Vec<Program> {
     dedup_and_sort(programs)
 }
 
+/// Reads one program back from its opaque id; `None` if the id is malformed or the
+/// key is gone. Lets commands take an id instead of a path from the UI.
+pub fn find(id: &str) -> Option<Program> {
+    let (tag, key_name) = id.split_once('\\')?;
+    if key_name.is_empty() || key_name.contains('\\') {
+        return None;
+    }
+    let (scope, hive, view) = UNINSTALL_SOURCES
+        .into_iter()
+        .find(|(s, ..)| s.tag() == tag)?;
+    let entry = Key::open(hive, UNINSTALL, view)?.subkey(key_name)?;
+    parse(scope, key_name, &entry)
+}
+
 /// One Uninstall subkey to a program; `None` without a display name.
 pub fn parse(scope: Scope, key_name: &str, entry: &impl Entry) -> Option<Program> {
     let name = entry.string("DisplayName")?;
@@ -134,6 +150,7 @@ pub fn parse(scope: Scope, key_name: &str, entry: &impl Entry) -> Option<Program
             .or_else(|| entry.string("HelpLink")),
         comments: entry.string("Comments"),
         msi: entry.dword("WindowsInstaller") == Some(1),
+        registry_key: shown_key(scope, key_name),
         scope,
         kind,
     })
@@ -306,5 +323,14 @@ mod tests {
         let programs = scan();
         assert!(!programs.is_empty());
         assert!(programs.iter().all(|p| !p.name.is_empty()));
+    }
+
+    #[test]
+    fn find_reads_back_a_scanned_program_and_rejects_bad_ids() {
+        let first = scan().into_iter().next().unwrap();
+        assert_eq!(find(&first.id).map(|p| p.name), Some(first.name));
+        for bad in ["", "hklm64", r"hklm64\", r"nope\k", r"hkcu\a\b"] {
+            assert!(find(bad).is_none(), "{bad}");
+        }
     }
 }
