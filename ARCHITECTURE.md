@@ -35,9 +35,9 @@ Tauri 2 + Svelte 5 retenu face à egui/eframe et fastframe : l'application n'est
 - Budget mesuré dans `docs/perf.md` à chaque jalon (démarrage, mémoire de travail, temps d'inventaire).
 - Mémoire : la cible de 150 Mo porte sur la mémoire privée **propre** (processus de l'application + processus de rendu WebView2), seule partie que notre code fait varier. Le socle WebView2 (navigateur, GPU, réseau, stockage, crashpad ≈ 135 Mo privés au repos, dont ≈ 78 Mo pour le GPU) est fixe : des options de lancement WebView2 n'y changent rien de mesurable (essai du 2026-11-09) et couper le GPU sacrifierait le flou. Le total reste mesuré et suivi.
 
-## Élévation (ADR 0002 à confirmer en Phase 0)
+## Élévation (ADR 0002)
 
-Proposition : l'application démarre non élevée (lecture, recherche, export). Les opérations qui exigent l'administrateur passent par un **broker élevé** lancé à la demande (`uninstaller-broker.exe`, même binaire avec argument) qui parle par tube nommé ACL limité à l'utilisateur, protocole versionné et sérialisé, liste fermée d'opérations. La WebView n'est jamais élevée.
+L'application démarre non élevée (lecture, recherche, export). Les opérations qui exigent l'administrateur passent par un **broker élevé** lancé à la demande (le même exécutable avec `--broker <tube>`) qui parle par tube nommé limité à l'utilisateur (`win/pipe.rs`), protocole versionné en trames JSON et liste fermée d'opérations (`core/broker.rs`). La WebView n'est jamais élevée.
 
 ## Export (F19)
 
