@@ -119,6 +119,11 @@ export function groupLabel(
     : GROUPS[group].label(key);
 }
 
+/** Optional columns of the list, in display order; the name is always shown (F2). */
+export const COLUMNS = ["version", "size", "date", "scope"] as const;
+export type Column = (typeof COLUMNS)[number];
+export const DEFAULT_COLUMNS: readonly Column[] = ["size", "date", "scope"];
+
 /** Kinds hidden by default (F1), each shown on request. */
 export const OPTIONAL_KINDS = ["systemComponent", "update"] as const;
 export type OptionalKind = (typeof OPTIONAL_KINDS)[number];

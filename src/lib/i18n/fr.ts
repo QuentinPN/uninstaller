@@ -28,6 +28,13 @@ export const fr = {
     sortBy: "Trier par",
     sort: { name: "Nom", size: "Taille", date: "Date d'installation" },
     list: "Programmes installés",
+    columns: "Colonnes",
+    column: {
+      version: "Version",
+      size: "Taille",
+      date: "Date d'installation",
+      scope: "Installation",
+    },
     groupBy: "Regrouper",
     group: {
       none: "Aucun",

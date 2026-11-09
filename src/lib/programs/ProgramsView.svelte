@@ -11,6 +11,9 @@ import VirtualList from "../ui/VirtualList.svelte";
 import AppIcon from "./AppIcon.svelte";
 import ProgramDetails from "./ProgramDetails.svelte";
 import {
+  COLUMNS,
+  type Column,
+  DEFAULT_COLUMNS,
   type GroupKey,
   groupLabel,
   OPTIONAL_KINDS,
@@ -23,6 +26,13 @@ import {
 
 const SORT_KEYS: SortKey[] = ["name", "size", "date"];
 const GROUP_KEYS: GroupKey[] = ["none", "publisher", "date", "size"];
+/** Grid track of each optional column. */
+const COLUMN_WIDTH: Record<Column, string> = {
+  version: "14ch",
+  size: "10ch",
+  date: "12ch",
+  scope: "11ch",
+};
 /** Placeholder rows while the inventory loads. */
 const SKELETON_ROWS = 8;
 
@@ -42,6 +52,20 @@ const shown = new SvelteSet<OptionalKind>();
 
 function toggle(kind: OptionalKind) {
   if (!shown.delete(kind)) shown.add(kind);
+}
+const columnSet = new SvelteSet<Column>(DEFAULT_COLUMNS);
+/** Chosen columns in their fixed order. */
+const columns = $derived(COLUMNS.filter((c) => columnSet.has(c)));
+const tracks = $derived(
+  [
+    "var(--icon-size)",
+    "minmax(0, 1fr)",
+    ...columns.map((c) => COLUMN_WIDTH[c]),
+  ].join(" "),
+);
+
+function toggleColumn(column: Column) {
+  if (!columnSet.delete(column)) columnSet.add(column);
 }
 let detailsOpen = $state(false);
 let list = $state<VirtualList<Program>>();
@@ -149,6 +173,19 @@ onMount(load);
       {/each}
     </select>
   </label>
+  <button class="menu-button" popovertarget="columns-menu">{fr.programs.columns}</button>
+  <div class="menu" id="columns-menu" popover>
+    {#each COLUMNS as column (column)}
+      <label class="menu-item">
+        <input
+          type="checkbox"
+          checked={columnSet.has(column)}
+          onchange={() => toggleColumn(column)}
+        />
+        {fr.programs.column[column]}
+      </label>
+    {/each}
+  </div>
   <div class="kinds" role="group" aria-label={fr.programs.show}>
     {#each OPTIONAL_KINDS as kind (kind)}
       <button class="kind-toggle" aria-pressed={shown.has(kind)} onclick={() => toggle(kind)}>
@@ -186,7 +223,7 @@ onMount(load);
   >
     {#snippet row(p: Program)}
       {@const size = sizeKib(p, sizes)}
-      <div class="program">
+      <div class="program" style:grid-template-columns={tracks}>
         <AppIcon program={p} />
         <div class="names">
           <span class="name">{p.name}</span>
@@ -198,13 +235,19 @@ onMount(load);
             </span>
           {/if}
         </div>
-        <span class="size num">
-          {size != null ? formatSize(size) : ""}
-        </span>
-        <span class="date num">{p.installDate ? formatDate(p.installDate) : ""}</span>
-        <span class="badge" title={fr.programs.scopeHint[p.scope]}>
-          {p.profile ?? fr.programs.scope[p.scope]}
-        </span>
+        {#each columns as column (column)}
+          {#if column === "version"}
+            <span class="cell">{p.version ?? ""}</span>
+          {:else if column === "size"}
+            <span class="cell num">{size != null ? formatSize(size) : ""}</span>
+          {:else if column === "date"}
+            <span class="cell num">{p.installDate ? formatDate(p.installDate) : ""}</span>
+          {:else}
+            <span class="badge" title={fr.programs.scopeHint[p.scope]}>
+              {p.profile ?? fr.programs.scope[p.scope]}
+            </span>
+          {/if}
+        {/each}
       </div>
     {/snippet}
   </VirtualList>
@@ -247,12 +290,14 @@ onMount(load);
   }
   .toolbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-4);
     margin-bottom: var(--space-3);
   }
   .search {
     flex: 1;
+    min-width: 20ch;
     max-width: 44ch;
     padding: var(--space-2) var(--space-4);
     border: none;
@@ -261,6 +306,12 @@ onMount(load);
   }
   .search::placeholder {
     color: var(--color-text-muted);
+  }
+  .sort,
+  .menu-button,
+  .menu-item,
+  .kind-toggle {
+    white-space: nowrap;
   }
   .sort {
     display: flex;
@@ -310,7 +361,6 @@ onMount(load);
   }
   .program {
     display: grid;
-    grid-template-columns: var(--icon-size) minmax(0, 1fr) 10ch 12ch 11ch;
     align-items: center;
     gap: var(--space-4);
     height: 100%;
@@ -331,10 +381,53 @@ onMount(load);
     color: var(--color-text-secondary);
     font-size: var(--font-size-sm);
   }
-  .size,
-  .date {
+  .cell {
+    overflow: hidden;
     color: var(--color-text-secondary);
     text-align: right;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .menu-button {
+    anchor-name: --columns;
+    padding: var(--space-1) var(--space-3);
+    border: none;
+    border-radius: var(--radius-pill);
+    background: var(--fill-glass);
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+  }
+  .menu-button:hover {
+    background: var(--fill-hover);
+  }
+  .menu {
+    position-anchor: --columns;
+    inset: auto;
+    top: anchor(bottom);
+    left: anchor(left);
+    /* Near the window's right edge, align to the button's right instead. */
+    position-try-fallbacks: flip-inline;
+    margin: var(--space-2) 0 0;
+    padding: var(--space-2);
+    border: none;
+    border-radius: var(--radius-md);
+    background: var(--material-thick);
+    backdrop-filter: var(--material-blur);
+    box-shadow: var(--shadow-lift);
+    color: var(--color-text);
+  }
+  .menu-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+  }
+  .menu-item:hover {
+    background: var(--fill-hover);
   }
   .badge {
     justify-self: end;
