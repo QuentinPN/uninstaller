@@ -6,6 +6,7 @@ import { commands, type Program } from "../ipc/bindings";
 import EmptyState from "../ui/EmptyState.svelte";
 import { EMPTY_SELECTION, type Selection } from "../ui/listNav";
 import VirtualList from "../ui/VirtualList.svelte";
+import AppIcon from "./AppIcon.svelte";
 import ProgramDetails from "./ProgramDetails.svelte";
 import { type SortKey, totalSizeKib, visiblePrograms } from "./view";
 
@@ -119,6 +120,7 @@ onMount(load);
   >
     {#snippet row(p: Program)}
       <div class="program">
+        <AppIcon program={p} />
         <div class="names">
           <span class="name">{p.name}</span>
           {#if p.publisher}<span class="publisher">{p.publisher}</span>{/if}
@@ -214,7 +216,7 @@ onMount(load);
   }
   .program {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 10ch 12ch 11ch;
+    grid-template-columns: var(--icon-size) minmax(0, 1fr) 10ch 12ch 11ch;
     align-items: center;
     gap: var(--space-4);
     height: 100%;

@@ -12,7 +12,7 @@
 ## Surface d'attaque
 
 - WebView jamais élevée ; broker élevé avec liste fermée d'opérations, entrées validées, identifiants opaques (pas de chemins libres venant de l'UI).
-- CSP stricte : `default-src 'self'`, pas de contenu distant, `connect-src ipc:` ; aucune requête réseau sauf « Chercher en ligne » qui ouvre le navigateur par défaut.
+- CSP stricte : `default-src 'self'`, pas de contenu distant, `connect-src ipc:`, `img-src 'self' http://icon.localhost` (schéma d'icônes local, lecture seule, ADR 0004) ; aucune requête réseau sauf « Chercher en ligne » qui ouvre le navigateur par défaut.
 - Capacités Tauri minimales (événements, fenêtre). Aucun plugin shell / fs générique.
 - Pas de secrets ; journaux sans données personnelles inutiles ; chemins utilisateur abrégés dans les journaux exportés.
 - Dépendances épinglées, `cargo deny` (licences, avis RustSec) et `npm audit` dans `npm run verify` (local, pas de CI distante).

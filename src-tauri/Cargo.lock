@@ -3749,6 +3749,7 @@ dependencies = [
 name = "uninstaller"
 version = "0.0.0"
 dependencies = [
+ "png 0.18.1",
  "serde",
  "specta",
  "specta-typescript",

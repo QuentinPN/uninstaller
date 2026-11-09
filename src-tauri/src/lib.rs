@@ -17,9 +17,30 @@ fn ipc() -> Builder<tauri::Wry> {
     ])
 }
 
+/// `icon://localhost/<id>` (WebView2: `http://icon.localhost/<id>`): the program's icon
+/// as PNG; 404 when it has none.
+fn icon_response(path: &str) -> tauri::http::Response<Vec<u8>> {
+    let png = core::icons::percent_decode(path.trim_start_matches('/'))
+        .and_then(|id| core::icons::png(&id));
+    let builder = tauri::http::Response::builder();
+    match png {
+        Some(body) => builder
+            .header("Content-Type", "image/png")
+            .header("Cache-Control", "max-age=3600")
+            .body(body),
+        None => builder.status(404).body(Vec::new()),
+    }
+    .expect("static response parts are valid")
+}
+
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(ipc().invoke_handler())
+        // Extraction is blocking Win32 work: off the main thread, one task per icon.
+        .register_asynchronous_uri_scheme_protocol("icon", |_ctx, request, responder| {
+            let path = request.uri().path().to_owned();
+            tauri::async_runtime::spawn_blocking(move || responder.respond(icon_response(&path)));
+        })
         .run(tauri::generate_context!())
         .expect("Tauri failed to start");
 }

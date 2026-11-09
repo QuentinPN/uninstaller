@@ -28,7 +28,7 @@ Tauri 2 + Svelte 5 retenu face à egui/eframe et fastframe : l'application n'est
 - Priorité au démarrage à froid : préchargement de WebView2 en parallèle de l'inventaire (lancé dès `setup`, avant que la page ne le demande), page initiale légère, écrans secondaires chargés à la demande (`import()`).
 
 - Inventaire : lecture registre parallèle (une tâche par ruche), résultat initial sans taille ni icône ; tailles calculées ensuite (parcours `FindFirstFileExW` + `FIND_FIRST_EX_LARGE_FETCH`, rayon borné) et poussées par `tauri::ipc::Channel` par paquets.
-- Icônes : extraites à la demande pour les lignes visibles, converties en PNG 32 px, servies par un protocole personnalisé `icon://` avec cache disque borné. Jamais de base64 dans l'IPC.
+- Icônes (ADR 0004) : extraites à la demande pour les lignes visibles (`loading="lazy"`), converties en PNG 48 px (net jusqu'à 150 %), servies par le schéma `icon://` à partir de l'identifiant opaque du programme ; cache HTTP de la WebView (`max-age=3600`), pas encore de cache disque. Jamais de base64 dans l'IPC.
 - Liste virtualisée (rendu des seules lignes visibles), recherche côté Rust si > 1000 éléments, sinon en mémoire côté UI.
 - Scan des restes : itérateurs, pas de collecte complète en mémoire ; annulation par `CancellationToken` vérifié dans chaque boucle.
 - Profil release : `lto`, `codegen-units = 1`, `strip`, `opt-level = 3` (comme Viewer). Pas de runtime tokio multi-thread si un pool borné suffit.
