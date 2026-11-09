@@ -5,8 +5,6 @@ import { formatMonth } from "../format";
 import { fr } from "../i18n/fr";
 import type { Kind, Program } from "../ipc/bindings";
 
-export type SortKey = "name" | "size" | "date";
-
 /** Sizes measured on disk (KiB) by program id, filled in as they arrive. */
 export type Sizes = ReadonlyMap<string, number>;
 
@@ -48,17 +46,35 @@ function nullsLast<V>(
   return compare(a, b);
 }
 
-function descending(a?: number | string | null, b?: number | string | null) {
-  return nullsLast(a, b, (x, y) => (x < y ? 1 : x > y ? -1 : 0));
+type Compare = (a: Program, b: Program) => number;
+type Value = string | number;
+
+/** What a list is ordered by: a value per program (`null` when unknown) and its
+ * natural direction. */
+interface Ordering<V extends Value> {
+  of: (program: Program, sizes: Sizes) => V | null | undefined;
+  descending: boolean;
 }
 
-type Compare = (a: Program, b: Program) => number;
+/** Numbers by value, text in French order (digits as numbers); unknown values last. */
+function compareBy<V extends Value>(
+  { of }: Ordering<V>,
+  descending: boolean,
+  sizes: Sizes,
+): Compare {
+  const sign = descending ? -1 : 1;
+  return (a, b) =>
+    nullsLast(of(a, sizes), of(b, sizes), (x, y) =>
+      typeof x === "number" && typeof y === "number"
+        ? sign * (x - y)
+        : sign * collator.compare(String(x), String(y)),
+    );
+}
 
-const COMPARE: Record<SortKey, (sizes: Sizes) => Compare> = {
-  name: () => (a, b) => collator.compare(a.name, b.name),
-  size: (sizes) => (a, b) => descending(sizeKib(a, sizes), sizeKib(b, sizes)),
-  date: () => (a, b) => descending(a.installDate, b.installDate),
-};
+/** Badge of the Installation column: the other account's name, else the scope. */
+export function scopeLabel(program: Program): string {
+  return program.profile ?? fr.programs.scope[program.scope];
+}
 
 export type GroupKey = "none" | "publisher" | "date" | "size";
 type Grouped = Exclude<GroupKey, "none">;
@@ -66,10 +82,7 @@ type Grouped = Exclude<GroupKey, "none">;
 /** Lower bounds of the size ranges in KiB, largest first (`fr.programs.sizeRanges`). */
 const SIZE_RANGES_KIB = [1024 * 1024, 100 * 1024, 10 * 1024, 0] as const;
 
-interface Grouping {
-  /** Group key, compared as text (numbers in order); `null` when unknown. */
-  of: (program: Program, sizes: Sizes) => string | null;
-  descending: boolean;
+interface Grouping extends Ordering<string> {
   label: (key: string) => string;
 }
 
@@ -96,17 +109,6 @@ const GROUPS: Record<Grouped, Grouping> = {
   },
 };
 
-function compareGroups(group: Grouped, sizes: Sizes): Compare {
-  const { of, descending } = GROUPS[group];
-  const sign = descending ? -1 : 1;
-  return (a, b) =>
-    nullsLast(
-      of(a, sizes),
-      of(b, sizes),
-      (x, y) => sign * collator.compare(x, y),
-    );
-}
-
 /** Heading of the program's group; `null` when the list is not grouped. */
 export function groupLabel(
   program: Program,
@@ -124,6 +126,23 @@ export function groupLabel(
 export const COLUMNS = ["version", "size", "date", "scope"] as const;
 export type Column = (typeof COLUMNS)[number];
 export const DEFAULT_COLUMNS: readonly Column[] = ["size", "date", "scope"];
+
+/** Any column sorts the list, the name first. */
+export type SortKey = "name" | Column;
+export const SORT_KEYS: readonly SortKey[] = ["name", ...COLUMNS];
+
+const SORTS: Record<SortKey, Ordering<Value>> = {
+  name: { of: (p) => p.name, descending: false },
+  version: { of: (p) => p.version, descending: false },
+  size: { of: (p, sizes) => sizeKib(p, sizes), descending: true },
+  date: { of: (p) => p.installDate, descending: true },
+  scope: { of: scopeLabel, descending: false },
+};
+
+/** Largest and newest first by default; `reversed` flips it. */
+export function isDescending(sort: SortKey, reversed: boolean): boolean {
+  return SORTS[sort].descending !== reversed;
+}
 
 /** Kinds hidden by default (F1), each shown on request. */
 export const OPTIONAL_KINDS = ["systemComponent", "update"] as const;
@@ -161,6 +180,8 @@ const PASSES: Record<Filter, (program: Program, since: string) => boolean> = {
 export interface ListView {
   query: string;
   sort: SortKey;
+  /** Against the key's natural direction (second click on its column). */
+  reversed: boolean;
   /** Groups come first, in their own order; `sort` applies within each. */
   group: GroupKey;
   sizes: Sizes;
@@ -179,11 +200,23 @@ function isShown(kind: Kind, shown: ReadonlySet<OptionalKind>): boolean {
 /** Programs of the shown kinds passing the filters and the search, grouped then sorted. */
 export function visiblePrograms(
   all: readonly Program[],
-  { query, sort, group, sizes, shown, filters, recentSince }: ListView,
+  {
+    query,
+    sort,
+    reversed,
+    group,
+    sizes,
+    shown,
+    filters,
+    recentSince,
+  }: ListView,
 ): Program[] {
   const needle = normalize(query.trim());
-  const within = COMPARE[sort](sizes);
-  const groups = group === "none" ? null : compareGroups(group, sizes);
+  const within = compareBy(SORTS[sort], isDescending(sort, reversed), sizes);
+  const groups =
+    group === "none"
+      ? null
+      : compareBy(GROUPS[group], GROUPS[group].descending, sizes);
   return all
     .filter(
       (p) =>

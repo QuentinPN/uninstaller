@@ -26,15 +26,20 @@ export const fr = {
     search: "Rechercher",
     searchHint: "Rechercher par nom, éditeur, commentaire ou dossier",
     sortBy: "Trier par",
-    sort: { name: "Nom", size: "Taille", date: "Date d'installation" },
     list: "Programmes installés",
     columns: "Colonnes",
-    column: {
+    /** Sort keys and columns. */
+    field: {
+      name: "Nom",
       version: "Version",
       size: "Taille",
       date: "Date d'installation",
       scope: "Installation",
     },
+    /** Column headings shorter than their field name. */
+    columnHead: { date: "Installé le" } as Partial<Record<string, string>>,
+    sortHint: (field: string) =>
+      `Trier par ${field.toLowerCase()} ; recliquer inverse l'ordre`,
     groupBy: "Regrouper",
     group: {
       none: "Aucun",

@@ -18,18 +18,20 @@ import {
   type Filter,
   type GroupKey,
   groupLabel,
+  isDescending,
   isRecent,
   OPTIONAL_KINDS,
   type OptionalKind,
   RECENT_DAYS,
   recentSince,
+  SORT_KEYS,
   type SortKey,
+  scopeLabel,
   sizeKib,
   totalSizeKib,
   visiblePrograms,
 } from "./view";
 
-const SORT_KEYS: SortKey[] = ["name", "size", "date"];
 const GROUP_KEYS: GroupKey[] = ["none", "publisher", "date", "size"];
 /** Grid track of each optional column. */
 const COLUMN_WIDTH: Record<Column, string> = {
@@ -49,6 +51,7 @@ let programs = $state<Program[] | null>(null);
 let failed = $state(false);
 let query = $state("");
 let sort = $state<SortKey>("name");
+let reversed = $state(false);
 let group = $state<GroupKey>("none");
 let selection = $state<Selection>(EMPTY_SELECTION);
 /** Sizes measured on disk, streamed in after the list is shown. */
@@ -61,6 +64,12 @@ const shown = new SvelteSet<OptionalKind>();
 const filters = new SvelteSet<Filter>();
 /** Fixed for the session: recent means recent when the screen opened. */
 const since = recentSince(new Date());
+
+/** A column heading sorts by its key; clicking it again reverses the order. */
+function sortBy(key: SortKey) {
+  reversed = key === sort && !reversed;
+  sort = key;
+}
 
 function toggle<T>(set: SvelteSet<T>, value: T) {
   if (!set.delete(value)) set.add(value);
@@ -94,6 +103,7 @@ const visible = $derived(
     ? visiblePrograms(programs, {
         query,
         sort,
+        reversed,
         group,
         sizes,
         shown,
@@ -175,9 +185,9 @@ onMount(load);
   />
   <label class="sort">
     {fr.programs.sortBy}
-    <select bind:value={sort}>
+    <select bind:value={sort} onchange={() => (reversed = false)}>
       {#each SORT_KEYS as key (key)}
-        <option value={key}>{fr.programs.sort[key]}</option>
+        <option value={key}>{fr.programs.field[key]}</option>
       {/each}
     </select>
   </label>
@@ -198,7 +208,7 @@ onMount(load);
           checked={columnSet.has(column)}
           onchange={() => toggle(columnSet, column)}
         />
-        {fr.programs.column[column]}
+        {fr.programs.field[column]}
       </label>
     {/each}
   </div>
@@ -240,6 +250,24 @@ onMount(load);
 {:else if visible.length === 0}
   <EmptyState title={fr.programs.noResults.title} text={fr.programs.noResults.text} />
 {:else}
+  <div class="columns-head" style:grid-template-columns={tracks}>
+    <span></span>
+    {#each ["name", ...columns] as SortKey[] as key (key)}
+      {@const field = fr.programs.field[key]}
+      <button
+        class="column-head"
+        class:end={key !== "name"}
+        aria-pressed={sort === key}
+        title={fr.programs.sortHint(field)}
+        onclick={() => sortBy(key)}
+      >
+        <span class="head-label">{fr.programs.columnHead[key] ?? field}</span>
+        {#if sort === key}
+          <span aria-hidden="true">{isDescending(sort, reversed) ? "↓" : "↑"}</span>
+        {/if}
+      </button>
+    {/each}
+  </div>
   <VirtualList
     bind:this={list}
     bind:selection
@@ -279,7 +307,7 @@ onMount(load);
             </span>
           {:else}
             <span class="badge" title={fr.programs.scopeHint[p.scope]}>
-              {p.profile ?? fr.programs.scope[p.scope]}
+              {scopeLabel(p)}
             </span>
           {/if}
         {/each}
@@ -430,6 +458,37 @@ onMount(load);
   }
   .orphan {
     color: var(--color-danger);
+  }
+  .columns-head {
+    display: grid;
+    gap: var(--space-4);
+    padding: 0 var(--space-3) var(--space-1);
+    /* Same width as the list below, whose scrollbar keeps its gutter. */
+    overflow: hidden;
+    scrollbar-gutter: stable;
+  }
+  .column-head {
+    display: flex;
+    gap: var(--space-1);
+    min-width: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+  }
+  .column-head.end {
+    justify-content: flex-end;
+  }
+  .column-head:hover,
+  .column-head[aria-pressed="true"] {
+    color: var(--color-text);
+  }
+  .head-label {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
   .menu-button {
     anchor-name: --columns;

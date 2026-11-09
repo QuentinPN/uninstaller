@@ -26,6 +26,7 @@ function view(
   return {
     query,
     sort,
+    reversed: false,
     group,
     sizes,
     shown,
@@ -123,6 +124,36 @@ describe("visiblePrograms", () => {
       "archive",
       "zip",
       "Éditeur",
+    ]);
+  });
+
+  it("reverses the order, unknown values still last", () => {
+    const reversed = (sort: SortKey) =>
+      names(visiblePrograms(all, { ...view("", sort), reversed: true }));
+    expect(reversed("size")).toEqual(["zip", "Éditeur", "archive"]);
+    expect(reversed("name")).toEqual(["zip", "Éditeur", "archive"]);
+  });
+
+  it("sorts versions as numbers and installs by their label", () => {
+    const versions = [
+      program("a", { version: "1.10" }),
+      program("b", { version: "1.9" }),
+      program("c"),
+    ];
+    expect(names(visiblePrograms(versions, view("", "version")))).toEqual([
+      "b",
+      "a",
+      "c",
+    ]);
+    const scopes = [
+      program("a", { scope: "user" }),
+      program("b", { scope: "otherUser", profile: "Marie" }),
+      program("c", { scope: "machine32" }),
+    ];
+    expect(names(visiblePrograms(scopes, view("", "scope")))).toEqual([
+      "c",
+      "b",
+      "a",
     ]);
   });
 });

@@ -172,6 +172,8 @@ function onkeydown(event: KeyboardEvent) {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    /* A header above can line up with the rows whether or not there is a scrollbar. */
+    scrollbar-gutter: stable;
     border-radius: var(--radius-sm);
     scrollbar-color: var(--fill-glass) transparent;
   }
