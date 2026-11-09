@@ -2,13 +2,8 @@
 //! administrator rights: only the broker calls them.
 
 use std::io;
-use std::sync::Once;
 use windows::Win32::Foundation::ERROR_SERVICE_DISABLED;
-use windows::Win32::System::Com::{
-    CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
-    CoInitializeSecurity, EOAC_DYNAMIC_CLOAKING, RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
-    RPC_C_IMP_LEVEL_IMPERSONATE,
-};
+use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::System::Restore::{
     APPLICATION_UNINSTALL, BEGIN_SYSTEM_CHANGE, END_SYSTEM_CHANGE, RESTOREPOINTINFO_EVENT_TYPE,
     RESTOREPOINTINFOW, SRSetRestorePointW, STATEMGRSTATUS,
@@ -20,13 +15,15 @@ use windows::Win32::System::Wmi::{
 };
 use windows::core::{BSTR, PCWSTR, w};
 
+use crate::win::com;
+
 /// Longest description, in UTF-16 units, without the NUL.
 pub const MAX_DESCRIPTION: usize = 255;
 
 /// Creates a restore point named `description` and returns its sequence number.
 /// System Restore turned off fails with `ERROR_SERVICE_DISABLED`.
 pub fn create(description: &str) -> io::Result<i64> {
-    prepare_com();
+    com::prepare();
     let started = change(BEGIN_SYSTEM_CHANGE, description, 0)?;
     // Nothing runs in between: the point covers the state before what comes next.
     change(END_SYSTEM_CHANGE, "", started)
@@ -77,8 +74,8 @@ pub struct Listed {
 
 /// Every restore point Windows keeps (`root\default:SystemRestore`), in WMI's order.
 pub fn list() -> io::Result<Vec<Listed>> {
-    prepare_com();
-    // SAFETY: COM is initialised on this thread by `prepare_com`.
+    com::prepare();
+    // SAFETY: COM is initialised on this thread by `com::prepare`.
     let locator: IWbemLocator =
         unsafe { CoCreateInstance(&WbemLocator, None, CLSCTX_INPROC_SERVER) }?;
     let none = BSTR::new();
@@ -145,31 +142,6 @@ fn text(value: &VARIANT) -> windows::core::Result<String> {
     unsafe { VariantToString(value, &mut buffer) }?;
     let end = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
     Ok(String::from_utf16_lossy(&buffer[..end]))
-}
-
-/// System Restore asks for COM with call security set, so it can take the volume
-/// snapshot under the caller's identity.
-fn prepare_com() {
-    static SECURITY: Once = Once::new();
-    // SAFETY: plain call; joining the multithreaded apartment again is harmless.
-    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-    SECURITY.call_once(|| {
-        // SAFETY: plain call with no pointers; it fails harmlessly if the process
-        // already set its security.
-        let _ = unsafe {
-            CoInitializeSecurity(
-                None,
-                -1,
-                None,
-                None,
-                RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
-                RPC_C_IMP_LEVEL_IMPERSONATE,
-                None,
-                EOAC_DYNAMIC_CLOAKING,
-                None,
-            )
-        };
-    });
 }
 
 #[cfg(test)]

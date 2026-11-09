@@ -23,6 +23,26 @@ const SHARED_FOLDERS: [&str; 11] = [
     "TEMP",
 ];
 
+/// Environment variables naming the data folders programs and Windows both write in.
+pub const DATA_FOLDERS: [&str; 3] = ["APPDATA", "LOCALAPPDATA", "ProgramData"];
+/// Windows' secrets under each data folder's `Microsoft`: refused with all they hold.
+const WINDOWS_SECRETS: [&str; 5] = [
+    "credentials",
+    "crypto",
+    "protect",
+    "vault",
+    "systemcertificates",
+];
+/// Windows' own folders under each data folder's `Microsoft`, refused themselves only:
+/// programs keep their folders and shortcuts inside.
+const WINDOWS_DATA: [&str; 5] = [
+    "",
+    "windows",
+    r"windows\start menu",
+    r"windows\start menu\programs",
+    r"windows\start menu\programs\startup",
+];
+
 /// True for a drive root, `%SystemRoot%` or anything under it, a shared folder, the
 /// folder holding the user profiles or any account's profile, or a path that is not
 /// absolute or goes through `..` (it could climb out of anything checked here).
@@ -45,19 +65,22 @@ pub fn is_protected(path: &Path) -> bool {
     {
         return true;
     }
+    let microsoft = || {
+        DATA_FOLDERS
+            .iter()
+            .filter_map(|name| var(name))
+            .map(|data| data.join("microsoft"))
+    };
+    if microsoft().any(|ms| WINDOWS_SECRETS.iter().any(|s| path.starts_with(ms.join(s)))) {
+        return true;
+    }
     SHARED_FOLDERS
         .iter()
         .filter_map(|name| var(name))
         .chain(profiles)
         // Per-user installs (lowercase: `var` normalizes).
         .chain(var("LOCALAPPDATA").map(|l| l.join("programs")))
-        // Windows' own per-user and machine data (Start Menu, caches, credentials).
-        .chain(
-            ["APPDATA", "LOCALAPPDATA", "ProgramData"]
-                .iter()
-                .filter_map(|name| var(name))
-                .flat_map(|data| [data.join("microsoft"), data.join(r"microsoft\windows")]),
-        )
+        .chain(microsoft().flat_map(|ms| WINDOWS_DATA.map(|folder| ms.join(folder))))
         .any(|shared| path == shared)
 }
 
@@ -116,8 +139,6 @@ pub fn is_protected_key(hive: Hive, path: &str) -> bool {
 }
 
 /// Lowercase, `/` as `\`, no `.` and no trailing separator: Windows paths compare this way.
-/// The form paths are compared in: lowercase, `\` separators, no `.` part, no trailing
-/// separator.
 pub fn normalize(path: &Path) -> PathBuf {
     let text = path.to_string_lossy().replace('/', "\\").to_lowercase();
     Path::new(&text)
@@ -135,7 +156,14 @@ mod tests {
         let appdata = PathBuf::from(std::env::var_os("APPDATA").unwrap());
         assert!(is_protected(&appdata.join("Microsoft")));
         assert!(is_protected(&appdata.join(r"Microsoft\Windows\")));
+        assert!(is_protected(
+            &appdata.join(r"Microsoft\Windows\Start Menu\Programs")
+        ));
+        assert!(is_protected(&appdata.join(r"Microsoft\Credentials\ABC")));
         assert!(!is_protected(&appdata.join(r"Microsoft\Teams")));
+        assert!(!is_protected(
+            &appdata.join(r"Microsoft\Windows\Start Menu\Programs\7-Zip")
+        ));
     }
 
     #[test]

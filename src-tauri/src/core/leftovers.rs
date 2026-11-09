@@ -1,6 +1,6 @@
-//! Leftover scan (F5), folders part: what a removed program may leave in the shared
-//! roots (Program Files, ProgramData, AppData). Read only: it proposes, the quarantine
-//! moves. Every candidate passes `protect::is_protected`; links and junctions are never
+//! Leftover scan (F5), files part: the folders a removed program may leave in the
+//! shared roots (Program Files, ProgramData, AppData, Start Menus) and its shortcuts.
+//! Read only: it proposes, the quarantine moves. Every candidate passes `protect::is_protected`; links and junctions are never
 //! listed nor followed.
 
 use std::fs;
@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use crate::core::inventory::Program;
 use crate::core::protect;
+use crate::win::shortcut;
 
 /// How surely a folder belongs to the program (SECURITY.md 5). Ordered from the
 /// surest: the Safe depth keeps `Safe`, Moderate adds `Moderate`, Advanced adds all.
@@ -32,7 +33,7 @@ pub struct Target {
     product: String,
     publisher: Option<String>,
     install: Option<PathBuf>,
-    /// Other programs' install folders: a folder holding one of them is never ours.
+    /// Other programs' install folders, normalized: a folder holding one is never ours.
     others: Vec<PathBuf>,
     /// Another installed program has the same name (other versions, editions): the name
     /// alone no longer tells whose a folder is.
@@ -98,8 +99,9 @@ impl Target {
         Self {
             product: key(product, &[]),
             publisher: publisher.map(|p| key(p, &COMPANY_WORDS)),
-            install,
-            others,
+            // An install folder such as `C:\Program Files` says nothing about the program.
+            install: install.filter(|folder| !protect::is_protected(folder)),
+            others: others.iter().map(|o| protect::normalize(o)).collect(),
             twin: false,
         }
     }
@@ -147,18 +149,67 @@ impl Target {
             let under_publisher = install.parent().is_some_and(|p| self.is_publisher(p));
             keep(install, under_publisher);
         }
-        found.sort_by(|a, b| (a.confidence, &a.path).cmp(&(b.confidence, &b.path)));
-        found
+        sorted(found)
+    }
+
+    /// The shortcuts that lead to the program: into its install folder, or named after
+    /// it with a target that is gone. A shortcut to a file that still exists elsewhere
+    /// is someone else's.
+    pub fn shortcuts(&self, shortcuts: &[Shortcut]) -> Vec<Leftover> {
+        if self.product.len() < MIN_KEY {
+            return Vec::new();
+        }
+        let found = shortcuts
+            .iter()
+            .filter_map(|shortcut| {
+                Some(Leftover {
+                    confidence: self.rate_shortcut(shortcut)?,
+                    path: shortcut.path.clone(),
+                })
+            })
+            .collect();
+        sorted(found)
+    }
+
+    fn rate_shortcut(&self, shortcut: &Shortcut) -> Option<Confidence> {
+        let link = &shortcut.path;
+        let into_install = self
+            .install
+            .as_deref()
+            .is_some_and(|i| shortcut.leads_into(&protect::normalize(i)));
+        if !into_install
+            && (shortcut.target_exists || self.others.iter().any(|o| shortcut.leads_into(o)))
+        {
+            return None;
+        }
+        // The shortcut's own name, and its Start Menu folder's.
+        let names: Vec<String> = [link.file_stem(), link.parent().and_then(Path::file_name)]
+            .into_iter()
+            .flatten()
+            .map(|name| key(&name.to_string_lossy(), &[]))
+            .collect();
+        let exact = names.contains(&self.product);
+        let product = exact && !self.twin;
+        let fragment =
+            !product && (exact || names.iter().any(|name| is_fragment(name, &self.product)));
+        match (into_install, product) {
+            (true, true) => Some(Confidence::Safe),
+            (true, false) | (false, true) => Some(Confidence::Moderate),
+            _ if fragment => Some(Confidence::Advanced),
+            _ => None,
+        }
     }
 
     fn rate(&self, folder: &Path, under_publisher: bool) -> Option<Confidence> {
         let normal = protect::normalize(folder);
         if protect::is_protected(folder)
             || self.is_publisher(folder)
-            || self
-                .others
-                .iter()
-                .any(|o| protect::normalize(o).starts_with(&normal))
+            || self.others.iter().any(|o| o.starts_with(&normal))
+            // Above the program's own install folder: may hold more than the program.
+            || self.install.iter().any(|i| {
+                let i = protect::normalize(i);
+                i != normal && i.starts_with(&normal)
+            })
         {
             return None;
         }
@@ -189,29 +240,88 @@ impl Target {
     }
 }
 
+/// A shortcut file and where it leads, read once for every program rated against it.
+pub struct Shortcut {
+    path: PathBuf,
+    /// Normalized (`protect::normalize`); `None` for a URL or a shell item.
+    target: Option<PathBuf>,
+    target_exists: bool,
+}
+
+impl Shortcut {
+    /// Its target is in `folder`, given normalized.
+    fn leads_into(&self, folder: &Path) -> bool {
+        self.target.as_ref().is_some_and(|t| t.starts_with(folder))
+    }
+}
+
+/// The shortcuts in `roots` and their direct subfolders, protected ones left out.
+pub fn shortcuts(roots: &[PathBuf]) -> Vec<Shortcut> {
+    roots
+        .iter()
+        .flat_map(|root| std::iter::once(root.clone()).chain(subfolders(root)))
+        .flat_map(|folder| links(&folder))
+        .filter(|link| !protect::is_protected(link))
+        .map(|path| {
+            let target = shortcut::target(&path).map(|t| protect::normalize(&t));
+            let target_exists = target.as_ref().is_some_and(|t| t.exists());
+            Shortcut {
+                path,
+                target,
+                target_exists,
+            }
+        })
+        .collect()
+}
+
 /// The roots a program's folders usually sit in, each once.
 pub fn roots() -> Vec<PathBuf> {
-    let mut roots: Vec<PathBuf> = Vec::new();
-    let vars = [
-        "ProgramFiles",
-        "ProgramFiles(x86)",
-        "ProgramW6432",
-        "ProgramData",
-        "APPDATA",
-        "LOCALAPPDATA",
+    let vars = ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"];
+    unique(
+        vars.iter()
+            .chain(&protect::DATA_FOLDERS)
+            .filter_map(std::env::var_os)
+            .map(PathBuf::from)
+            .chain(env_path("LOCALAPPDATA", "Programs"))
+            .chain(start_menus()),
+    )
+}
+
+/// Where shortcuts sit: both Start Menus and both Desktops, each once.
+pub fn shortcut_roots() -> Vec<PathBuf> {
+    let desktops = [
+        env_path("USERPROFILE", "Desktop"),
+        env_path("PUBLIC", "Desktop"),
     ];
-    let local_programs = std::env::var_os("LOCALAPPDATA").map(|l| Path::new(&l).join("Programs"));
-    for root in vars
-        .iter()
-        .filter_map(std::env::var_os)
-        .map(PathBuf::from)
-        .chain(local_programs)
-    {
-        if !roots.iter().any(|r| same_path(r, &root)) {
-            roots.push(root);
+    unique(start_menus().chain(desktops.into_iter().flatten()))
+}
+
+/// The user's and every user's Start Menu program folders.
+fn start_menus() -> impl Iterator<Item = PathBuf> {
+    ["APPDATA", "ProgramData"]
+        .into_iter()
+        .filter_map(|var| env_path(var, r"Microsoft\Windows\Start Menu\Programs"))
+}
+
+/// `rest` under the folder the environment variable `var` names.
+fn env_path(var: &str, rest: &str) -> Option<PathBuf> {
+    std::env::var_os(var).map(|folder| Path::new(&folder).join(rest))
+}
+
+fn unique(paths: impl Iterator<Item = PathBuf>) -> Vec<PathBuf> {
+    let mut kept: Vec<PathBuf> = Vec::new();
+    for path in paths {
+        if !kept.iter().any(|k| same_path(k, &path)) {
+            kept.push(path);
         }
     }
-    roots
+    kept
+}
+
+/// Surest first, then by path.
+fn sorted(mut found: Vec<Leftover>) -> Vec<Leftover> {
+    found.sort_by(|a, b| (a.confidence, &a.path).cmp(&(b.confidence, &b.path)));
+    found
 }
 
 /// A name reduced to what identifies it: lowercase letters, digits, `+` and `#`, with
@@ -267,6 +377,20 @@ fn same_path(a: &Path, b: &Path) -> bool {
 /// A folder that is not a link or junction.
 fn real_folder(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|m| m.is_dir() && !m.is_symlink())
+}
+
+/// The shortcut files (`.lnk`) directly in `folder`.
+fn links(folder: &Path) -> impl Iterator<Item = PathBuf> + use<> {
+    fs::read_dir(folder)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_file()))
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("lnk"))
+        })
 }
 
 /// The real subfolders of `folder`; none if it cannot be read.
@@ -353,6 +477,75 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    /// Shortcuts written under %TEMP%, standing in for a Start Menu.
+    #[test]
+    fn rates_shortcuts_by_where_they_lead() {
+        let dir = std::env::temp_dir()
+            .join("uninstaller-tests")
+            .join(format!("shortcuts-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let (menu, install, other) = (dir.join("menu"), dir.join("Widget Pro"), dir.join("Other"));
+        for folder in [&menu.join("Widget Pro"), &install, &other] {
+            fs::create_dir_all(folder).unwrap();
+        }
+        fs::write(install.join("widget.exe"), b"x").unwrap();
+        fs::write(other.join("other.exe"), b"x").unwrap();
+        let gone = dir.join("gone.exe");
+        let links = [
+            ("Widget Pro.lnk", install.join("widget.exe")),
+            (r"Widget Pro\Manual.lnk", gone.clone()),
+            ("WidgetPro Help.lnk", gone.clone()),
+            ("Widget Pro Other.lnk", other.join("other.exe")),
+            ("Unrelated.lnk", gone),
+        ];
+        for (name, target) in &links {
+            shortcut::create(&menu.join(name), target).unwrap();
+        }
+        let target = Target::new("Widget Pro", None, Some(install), vec![other]);
+
+        let found = target.shortcuts(&shortcuts(std::slice::from_ref(&menu)));
+
+        let expected: Vec<_> = [
+            ("Widget Pro.lnk", Confidence::Safe),
+            (r"Widget Pro\Manual.lnk", Confidence::Moderate),
+            ("WidgetPro Help.lnk", Confidence::Advanced),
+        ]
+        .into_iter()
+        .map(|(name, confidence)| Leftover {
+            path: menu.join(name),
+            confidence,
+        })
+        .collect();
+        assert_eq!(found, expected);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_protected_install_folder_is_ignored() {
+        let program_files = PathBuf::from(std::env::var_os("ProgramFiles").unwrap());
+        let target = Target::new("Widget Pro", None, Some(program_files), Vec::new());
+        assert_eq!(target.install, None);
+    }
+
+    #[test]
+    fn a_folder_above_the_install_folder_is_not_proposed() {
+        let dir = std::env::temp_dir()
+            .join("uninstaller-tests")
+            .join(format!("above-{}", std::process::id()));
+        let install = dir.join(r"Foobar\x64");
+        fs::create_dir_all(&install).unwrap();
+        let target = Target::new("Foobar", None, Some(install.clone()), vec![]);
+        let found = target.scan(std::slice::from_ref(&dir));
+        assert_eq!(
+            found,
+            [Leftover {
+                path: install,
+                confidence: Confidence::Moderate
+            }]
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn a_shared_name_is_only_a_partial_match() {
         let dir = std::env::temp_dir()
@@ -380,14 +573,17 @@ mod tests {
         assert!(target.scan(&[parent]).is_empty());
     }
 
-    /// Read only, on this machine's programs: nothing proposed is protected or a link.
+    /// Read only, on this machine's programs: nothing proposed is protected, and folders
+    /// are real folders, not links.
     /// `--nocapture` prints what each program would get, for a manual look.
     #[test]
     fn real_programs_get_no_protected_folder() {
-        let roots = roots();
+        let (roots, links) = (roots(), shortcuts(&shortcut_roots()));
         let all = crate::core::inventory::scan();
         for program in &all {
-            for leftover in Target::of(program, &all).scan(&roots) {
+            let target = Target::of(program, &all);
+            let found = target.shortcuts(&links);
+            for leftover in target.scan(&roots).into_iter().chain(found) {
                 println!(
                     "{} · {:?} · {}",
                     program.name,
@@ -395,7 +591,7 @@ mod tests {
                     leftover.path.display()
                 );
                 assert!(!protect::is_protected(&leftover.path));
-                assert!(real_folder(&leftover.path));
+                assert!(real_folder(&leftover.path) || leftover.path.is_file());
             }
         }
     }
