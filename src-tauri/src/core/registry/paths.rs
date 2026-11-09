@@ -27,6 +27,13 @@ pub const SOFTWARE_ROOTS: [(Hive, &str); 4] = [
     (Hive::CurrentUser, r"Software\WOW6432Node"),
 ];
 
+/// One subkey per service and driver, under HKLM.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "Phase 3: tested now, called by the next slices")
+)]
+pub const SERVICES: &str = r"SYSTEM\CurrentControlSet\Services";
+
 /// Every installed program has a subkey here (per hive and view).
 pub const UNINSTALL: &str = uninstall!("SOFTWARE");
 /// The same key as regedit shows it in the 32-bit view.

@@ -90,14 +90,14 @@ impl Program {
     /// `%SystemRoot%\…`) proves nothing either way.
     fn is_orphan(&self) -> bool {
         match self.uninstall_string.as_deref() {
-            Some(command) => uninstaller_path(command).is_some_and(|exe| !exe.is_file()),
+            Some(command) => command_program(command).is_some_and(|exe| !exe.is_file()),
             None => self.declared_folder().is_some_and(|f| !f.exists()),
         }
     }
 }
 
-/// The program file an uninstall command runs, when it names one by full path.
-fn uninstaller_path(command: &str) -> Option<PathBuf> {
+/// The program file a command line runs, when it names one by full path.
+pub fn command_program(command: &str) -> Option<PathBuf> {
     let command = command.trim();
     let path = match command.strip_prefix('"') {
         Some(rest) => rest.split('"').next()?,
@@ -404,8 +404,8 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn uninstaller_path_needs_a_full_path() {
-        let exe = |c: &str| uninstaller_path(c).map(|p| p.to_string_lossy().into_owned());
+    fn command_program_needs_a_full_path() {
+        let exe = |c: &str| command_program(c).map(|p| p.to_string_lossy().into_owned());
         assert_eq!(
             exe(r#""C:\Program Files\App\unins000.exe" /SILENT"#).as_deref(),
             Some(r"C:\Program Files\App\unins000.exe")

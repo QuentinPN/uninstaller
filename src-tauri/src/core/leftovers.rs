@@ -1,14 +1,15 @@
 //! Leftover scan (F5): the folders a removed program may leave in the shared roots
 //! (Program Files, ProgramData, AppData, Start Menus), its shortcuts and its registry
-//! keys under `SOFTWARE`. Read only: it proposes, the quarantine moves. Every folder
+//! keys under `SOFTWARE` and its services. Read only: it proposes, the quarantine moves. Every folder
 //! passes `protect::is_protected`, every key `protect::is_protected_key`; links and
 //! junctions are never listed nor followed.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::core::inventory::Program;
+use crate::core::inventory::{self, Program};
 use crate::core::protect;
+use crate::core::registry::paths;
 use crate::win::registry::{Hive, Key, View};
 use crate::win::shortcut;
 
@@ -24,17 +25,19 @@ pub enum Confidence {
     Advanced,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+/// Ordered surest first, then by path.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Leftover {
-    pub path: PathBuf,
     pub confidence: Confidence,
+    pub path: PathBuf,
 }
 
-/// A registry key as regedit shows it (`HKEY_CURRENT_USER\Software\Acme\Widget`).
-#[derive(Debug, PartialEq, Eq)]
-pub struct KeyLeftover {
-    pub key: String,
+/// A registry key as regedit shows it (`HKEY_CURRENT_USER\Software\Acme\Widget`) or a
+/// service's name; ordered surest first, then by name.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Named {
     pub confidence: Confidence,
+    pub name: String,
 }
 
 /// What the scan matches folders against, read from the inventory entry.
@@ -170,7 +173,7 @@ impl Target {
 
     /// Subkeys of `roots` (`SOFTWARE` keys) named after the program, and of its
     /// publisher's key, surest first, then by key. Names only: values are not read.
-    pub fn keys(&self, roots: &[(Hive, &str)]) -> Vec<KeyLeftover> {
+    pub fn keys(&self, roots: &[(Hive, &str)]) -> Vec<Named> {
         if self.product.len() < MIN_KEY {
             return Vec::new();
         }
@@ -179,8 +182,8 @@ impl Target {
             if !protect::is_protected_key(hive, &path)
                 && let Some(confidence) = self.rate_name(name, false, under_publisher)
             {
-                let key = format!(r"{}\{path}", hive.name());
-                found.push(KeyLeftover { key, confidence });
+                let name = format!(r"{}\{path}", hive.name());
+                found.push(Named { confidence, name });
             }
         };
         for &(hive, root) in roots {
@@ -202,8 +205,33 @@ impl Target {
                 }
             }
         }
-        found.sort_by(|a, b| (a.confidence, &a.key).cmp(&(b.confidence, &b.key)));
-        found
+        sorted(found)
+    }
+
+    /// The services whose program file is in the install folder or gone, named after
+    /// the program; surest first.
+    pub fn services(&self, services: &[Service]) -> Vec<Named> {
+        if self.product.len() < MIN_KEY {
+            return Vec::new();
+        }
+        let found = services
+            .iter()
+            .filter_map(|service| {
+                let names: Vec<String> = std::iter::once(&service.name)
+                    .chain(&service.display)
+                    .map(|name| key(name, &[]))
+                    .collect();
+                Some(Named {
+                    confidence: self.rate_pointer(
+                        &service.binary,
+                        service.binary_exists,
+                        &names,
+                    )?,
+                    name: service.name.clone(),
+                })
+            })
+            .collect();
+        sorted(found)
     }
 
     /// The shortcuts that lead to the program: into its install folder, or named after
@@ -227,21 +255,27 @@ impl Target {
 
     fn rate_shortcut(&self, shortcut: &Shortcut) -> Option<Confidence> {
         let link = &shortcut.path;
-        let into_install = self
-            .install
-            .as_deref()
-            .is_some_and(|i| shortcut.leads_into(&protect::normalize(i)));
-        if !into_install
-            && (shortcut.target_exists || self.others.iter().any(|o| shortcut.leads_into(o)))
-        {
-            return None;
-        }
         // The shortcut's own name, and its Start Menu folder's.
         let names: Vec<String> = [link.file_stem(), link.parent().and_then(Path::file_name)]
             .into_iter()
             .flatten()
             .map(|name| key(&name.to_string_lossy(), &[]))
             .collect();
+        let target = shortcut.target.as_deref()?;
+        self.rate_pointer(target, shortcut.target_exists, &names)
+    }
+
+    /// Rates what runs a file (a shortcut, a service) by where it leads, normalized, and
+    /// its names, reduced by `key`. One leading to a file still present elsewhere, or
+    /// into another program's folder, is someone else's.
+    fn rate_pointer(&self, target: &Path, exists: bool, names: &[String]) -> Option<Confidence> {
+        let into_install = self
+            .install
+            .as_deref()
+            .is_some_and(|i| target.starts_with(protect::normalize(i)));
+        if !into_install && (exists || self.others.iter().any(|o| target.starts_with(o))) {
+            return None;
+        }
         let exact = names.contains(&self.product);
         let product = exact && !self.shared(&self.product);
         let fragment = !product
@@ -338,11 +372,42 @@ pub struct Shortcut {
     target_exists: bool,
 }
 
-impl Shortcut {
-    /// Its target is in `folder`, given normalized.
-    fn leads_into(&self, folder: &Path) -> bool {
-        self.target.as_ref().is_some_and(|t| t.starts_with(folder))
-    }
+/// A Windows service whose program file is named by full path, read once for every
+/// program rated against it.
+pub struct Service {
+    name: String,
+    display: Option<String>,
+    /// Normalized (`protect::normalize`).
+    binary: PathBuf,
+    binary_exists: bool,
+}
+
+/// The services (not the drivers) run from a full path outside the protected folders:
+/// Windows' own, under `System32` or named through `%SystemRoot%`, are left out.
+pub fn services() -> Vec<Service> {
+    let Some(root) = Key::open(Hive::LocalMachine, paths::SERVICES, View::Native64) else {
+        return Vec::new();
+    };
+    root.subkey_names()
+        .into_iter()
+        .filter_map(|name| {
+            let service = root.subkey(&name)?;
+            // SERVICE_WIN32_OWN_PROCESS | SERVICE_WIN32_SHARE_PROCESS: drivers lack both.
+            if service.dword("Type")? & 0x30 == 0 {
+                return None;
+            }
+            let binary = inventory::command_program(&service.string("ImagePath")?)?;
+            if protect::is_protected(&binary) {
+                return None;
+            }
+            Some(Service {
+                display: service.string("DisplayName"),
+                binary_exists: binary.is_file(),
+                binary: protect::normalize(&binary),
+                name,
+            })
+        })
+        .collect()
 }
 
 /// The shortcuts in `roots` and their direct subfolders, protected ones left out.
@@ -408,9 +473,8 @@ fn unique(paths: impl Iterator<Item = PathBuf>) -> Vec<PathBuf> {
     kept
 }
 
-/// Surest first, then by path.
-fn sorted(mut found: Vec<Leftover>) -> Vec<Leftover> {
-    found.sort_by(|a, b| (a.confidence, &a.path).cmp(&(b.confidence, &b.path)));
+fn sorted<T: Ord>(mut found: Vec<T>) -> Vec<T> {
+    found.sort();
     found
 }
 
@@ -670,7 +734,7 @@ mod tests {
     #[test]
     fn real_programs_get_no_protected_folder() {
         let (roots, links) = (roots(), shortcuts(&shortcut_roots()));
-        let software = crate::core::registry::paths::SOFTWARE_ROOTS;
+        let (software, services) = (paths::SOFTWARE_ROOTS, services());
         let all = crate::core::inventory::scan();
         for program in &all {
             let target = Target::of(program, &all);
@@ -688,10 +752,17 @@ mod tests {
             for leftover in target.keys(&software) {
                 println!(
                     "{} · {:?} · {}",
-                    program.name, leftover.confidence, leftover.key
+                    program.name, leftover.confidence, leftover.name
                 );
-                let (hive, path) = Hive::parse(&leftover.key).unwrap();
+                let (hive, path) = Hive::parse(&leftover.name).unwrap();
                 assert!(!protect::is_protected_key(hive, path));
+            }
+            for leftover in target.services(&services) {
+                let service = &leftover.name;
+                println!(
+                    "{} · {:?} · service {service}",
+                    program.name, leftover.confidence
+                );
             }
         }
     }
@@ -736,9 +807,9 @@ mod tests {
             ("Acme Widget Tools", Confidence::Advanced),
         ]
         .into_iter()
-        .map(|(sub, confidence)| KeyLeftover {
-            key: format!(r"HKEY_CURRENT_USER\{root}\{sub}"),
+        .map(|(sub, confidence)| Named {
             confidence,
+            name: format!(r"HKEY_CURRENT_USER\{root}\{sub}"),
         })
         .collect();
         registry::test_key::clear(&root);
@@ -762,6 +833,62 @@ mod tests {
             target.rate_name("Edge", false, true),
             Some(Confidence::Advanced)
         );
+    }
+
+    /// A shortcut to a shell item has no file to tell whose it is: its name is no proof.
+    #[test]
+    fn a_shortcut_without_a_file_target_is_not_proposed() {
+        let shortcut = Shortcut {
+            path: std::env::temp_dir().join("Widget Pro.lnk"),
+            target: None,
+            target_exists: false,
+        };
+        let target = Target::new("Widget Pro", None, None, vec![]);
+        assert!(target.shortcuts(&[shortcut]).is_empty());
+    }
+
+    #[test]
+    fn rates_services_by_their_program_file() {
+        let dir = std::env::temp_dir()
+            .join("uninstaller-tests")
+            .join(format!("services-{}", std::process::id()));
+        let (install, other) = (dir.join("Widget Pro"), dir.join("Other"));
+        let service = |name: &str, display: Option<&str>, binary: PathBuf, exists| Service {
+            name: name.to_owned(),
+            display: display.map(str::to_owned),
+            binary: protect::normalize(&binary),
+            binary_exists: exists,
+        };
+        let services = [
+            service(
+                "WidgetSvc",
+                Some("Widget Pro"),
+                install.join("svc.exe"),
+                true,
+            ),
+            service("Widget Pro", None, dir.join(r"gone\svc.exe"), false),
+            service("WidgetProUpdate", None, dir.join(r"gone\up.exe"), false),
+            service("Widget Pro Agent", None, other.join("agent.exe"), false),
+            service("Widget Pro", None, dir.join(r"elsewhere\svc.exe"), true),
+            service("Unrelated", None, install.join("x.exe"), true),
+        ];
+        let target = Target::new("Widget Pro", None, Some(install), vec![other]);
+
+        let found = target.services(&services);
+
+        let expected: Vec<_> = [
+            ("WidgetSvc", Confidence::Safe),
+            ("Unrelated", Confidence::Moderate),
+            ("Widget Pro", Confidence::Moderate),
+            ("WidgetProUpdate", Confidence::Advanced),
+        ]
+        .into_iter()
+        .map(|(name, confidence)| Named {
+            confidence,
+            name: name.to_owned(),
+        })
+        .collect();
+        assert_eq!(found, expected);
     }
 
     #[test]
