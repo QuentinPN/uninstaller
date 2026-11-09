@@ -25,7 +25,7 @@ Tauri 2 + Svelte 5 retenu face à egui/eframe et fastframe : l'application n'est
 
 ## Performance et mémoire
 
-- Priorité au démarrage à froid : préchargement de WebView2 en parallèle de l'inventaire (lancé dès `setup`, avant que la page ne le demande), page initiale légère, écrans secondaires chargés à la demande (`import()`).
+- Priorité au démarrage à froid : inventaire lancé sur un thread dès `run()`, en parallèle du démarrage de WebView2, et remis au premier `list_programs` (les suivants relisent le registre), page initiale légère, écrans secondaires chargés à la demande (`import()`).
 
 - Inventaire : HKLM 64 et 32 bits, HKCU, puis chaque autre compte chargé sous HKU (`core/profiles.rs`, sources décrites une fois dans `core/registry/paths.rs`) ; lecture registre parallèle (une tâche par ruche), résultat initial sans taille ni icône ; tailles calculées ensuite (`std::fs::read_dir`, qui s'appuie sur `FindFirstFileExW` et lit la taille dans l'entrée du répertoire sans ouvrir le fichier ; 4 dossiers en parallèle ; jonctions et liens non suivis ; dossiers partagés refusés par `core/protect.rs`) et poussées par `tauri::ipc::Channel` par paquets.
 - Icônes (ADR 0004) : extraites à la demande pour les lignes visibles (`loading="lazy"`), converties en PNG 48 px (net jusqu'à 150 %), servies par le schéma `icon://` à partir de l'identifiant opaque du programme ; cache HTTP de la WebView (`max-age=3600`), pas encore de cache disque. Jamais de base64 dans l'IPC.

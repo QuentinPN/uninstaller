@@ -6,10 +6,16 @@ import { invoke as __TAURI_INVOKE, Channel } from "@tauri-apps/api/core";
 export const commands = {
 	appInfo: () => __TAURI_INVOKE<AppInfo>("app_info"),
 	/**
-	 *  Installed programs, sorted by name (F1). Async so the registry walk stays off the
-	 *  main thread.
+	 *  Installed programs, sorted by name (F1): the prefetched inventory the first time,
+	 *  a fresh read after (retry). Async so the registry walk stays off the main thread.
 	 */
 	listPrograms: () => __TAURI_INVOKE<Program_Serialize[]>("list_programs"),
+	/**
+	 *  The program list's first rows are painted. When measuring, appends the time
+	 *  (Unix milliseconds) to the file named by `UNINSTALLER_PERF_LOG`; otherwise does nothing.
+	 *  Takes nothing from the page: the path comes from whoever launched the app.
+	 */
+	listShown: () => __TAURI_INVOKE<void>("list_shown"),
 	/**
 	 *  Size on disk of every program with an install folder, sent in batches on `on_sizes`
 	 *  as folders finish (F1). Resolves once all are sent.

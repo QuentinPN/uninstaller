@@ -2,7 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use std::io::Write;
 use std::process::Command;
+use std::sync::Mutex;
+use std::thread::JoinHandle;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use tauri::ipc::Channel;
 
@@ -18,12 +22,50 @@ pub struct AppInfo {
     pub elevated: bool,
 }
 
-/// Installed programs, sorted by name (F1). Async so the registry walk stays off the
-/// main thread.
+/// The inventory started at launch, taken by the first `list_programs`.
+static PREFETCH: Mutex<Option<JoinHandle<Vec<Program>>>> = Mutex::new(None);
+
+/// Starts reading the inventory while WebView2 starts (≈ 400 ms, docs/perf.md), so
+/// the first list is ready when the page asks for it.
+pub fn prefetch_programs() {
+    if let Ok(mut slot) = PREFETCH.lock() {
+        *slot = Some(std::thread::spawn(inventory::scan));
+    }
+}
+
+/// Installed programs, sorted by name (F1): the prefetched inventory the first time,
+/// a fresh read after (retry). Async so the registry walk stays off the main thread.
 #[tauri::command]
 #[specta::specta]
 pub async fn list_programs() -> Vec<Program> {
-    inventory::scan()
+    let prefetched = PREFETCH.lock().ok().and_then(|mut slot| slot.take());
+    prefetched
+        .and_then(|scan| scan.join().ok())
+        .unwrap_or_else(inventory::scan)
+}
+
+/// Names the file where `list_shown` notes the time; set only by
+/// `scripts/measure-startup.ps1` (docs/perf.md).
+const PERF_LOG: &str = "UNINSTALLER_PERF_LOG";
+
+/// The program list's first rows are painted. When measuring, appends the time
+/// (Unix milliseconds) to the file named by `UNINSTALLER_PERF_LOG`; otherwise does nothing.
+/// Takes nothing from the page: the path comes from whoever launched the app.
+#[tauri::command]
+#[specta::specta]
+pub fn list_shown() {
+    let Some(path) = std::env::var_os(PERF_LOG) else {
+        return;
+    };
+    let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+        return;
+    };
+    // A measurement aid: a failed write only leaves the run without its figure.
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut file| writeln!(file, "{}", now.as_millis()));
 }
 
 /// Opens a program's install folder in Explorer. Takes the opaque id, never a path:

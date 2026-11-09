@@ -1,6 +1,6 @@
 <script lang="ts">
 import { Channel } from "@tauri-apps/api/core";
-import { onMount } from "svelte";
+import { onMount, tick } from "svelte";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import { formatDate, formatSize, isoDate } from "../format";
 import { fr } from "../i18n/fr";
@@ -69,6 +69,8 @@ const sizes = new SvelteMap<string, number>();
 let sizing = $state(false);
 /** Bumped by each load, so a stale stream from before a retry is ignored. */
 let generation = 0;
+/** The first list shown was reported (startup measurement, docs/perf.md). */
+let reported = false;
 /** System components and updates the user chose to show (hidden by default, F1). */
 const shown = new SvelteSet<OptionalKind>();
 const filters = new SvelteSet<Filter>();
@@ -150,8 +152,19 @@ function load() {
     (list) => {
       programs = list;
       measure(current);
+      reportShown();
     },
     () => (failed = true),
+  );
+}
+
+/** Once rendered and painted: a timeout queued from a frame callback runs after
+ * that frame's paint. */
+function reportShown() {
+  if (reported) return;
+  reported = true;
+  tick().then(() =>
+    requestAnimationFrame(() => setTimeout(commands.listShown)),
   );
 }
 

@@ -13,6 +13,7 @@ fn ipc() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(collect_commands![
         commands::app_info,
         commands::list_programs,
+        commands::list_shown,
         commands::compute_sizes,
         commands::open_install_folder,
         commands::save_export
@@ -36,6 +37,7 @@ fn icon_response(path: &str) -> tauri::http::Response<Vec<u8>> {
 }
 
 pub fn run() {
+    commands::prefetch_programs();
     tauri::Builder::default()
         .invoke_handler(ipc().invoke_handler())
         // Extraction is blocking Win32 work: off the main thread, one task per icon.

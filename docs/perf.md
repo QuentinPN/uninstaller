@@ -3,7 +3,8 @@
 Cibles (`PRODUCT.md`) : fenêtre utilisable < 1 s à froid, liste visible < 300 ms, mémoire privée propre < 150 Mo pendant l'usage.
 
 Méthode : `scripts/measure-startup.ps1` sur le binaire release (`npx tauri build --no-bundle`), 5 lancements, médiane.
-- **Fenêtre** : du lancement à l'existence de la fenêtre principale (`MainWindowHandle`). Ce n'est pas encore le premier rendu utilisable : l'instrumentation du premier rendu arrive avec la liste des programmes (Phase 1).
+- **Fenêtre** : du lancement à l'existence de la fenêtre principale (`MainWindowHandle`), encore vide.
+- **Liste** : du lancement aux premières lignes de la liste des programmes peintes (Phase 1, tranche 14) ; la page appelle `list_shown` après la première image, qui écrit l'heure dans le fichier nommé par `UNINSTALLER_PERF_LOG`.
 - **Mémoire**, 5 s après l'ouverture, au repos :
   - **Privé propre** : processus de l'application + processus de rendu WebView2, la partie que notre code fait varier (cible).
   - **Privé total** : somme sur l'application et tous ses processus WebView2.
@@ -31,3 +32,24 @@ Constat : création de la fenêtre bien sous 1 s ; mémoire propre 34,8 Mo, sous
 ## 2026-11-09 — Phase 1, tranche 1 (inventaire registre)
 
 Même machine. `core::inventory::scan()` en release (`cargo test --release --lib scans_this_machine`, 3 exécutions) : 0,05 – 0,06 s pour 257 programmes affichés (HKLM 64/32 + HKCU). Le temps jusqu'à la liste visible (cible < 300 ms) sera instrumenté avec le premier rendu.
+
+## 2026-11-09 — Phase 1, tranche 14 (premier rendu de la liste)
+
+Même machine, 891 entrées d'inventaire, écran Programmes à l'ouverture (tailles en cours de calcul pendant la mesure mémoire).
+
+Répartition (binaire de diagnostic marquant aussi le début du script de la page, 4 lancements) : la page commence à s'exécuter à ≈ 410 ms (création de WebView2 et chargement de la page, avant tout code de l'application), la liste est peinte ≈ 110 ms plus tard, dont ≈ 70 ms de lecture du registre (`scans_this_machine` en release : 0,07-0,08 s).
+
+Avant : inventaire lu à la demande de la page → liste à **564 ms** (médiane ; 747, 533, 564, 557, 576).
+
+Après : inventaire lancé au démarrage du processus, en parallèle de WebView2 :
+
+| Lancement | Fenêtre (ms) | Liste (ms) | Processus | Working set (Mo) | Privé total (Mo) | Privé propre (Mo) |
+|---|---|---|---|---|---|---|
+| 1 | 131 | 594 | 7 | 344.5 | 193.6 | 48.8 |
+| 2 | 46 | 491 | 7 | 346.6 | 198.6 | 55.9 |
+| 3 | 29 | 488 | 7 | 344.2 | 193.7 | 48.8 |
+| 4 | 46 | 480 | 7 | 344.6 | 196.7 | 54.4 |
+| 5 | 46 | 539 | 7 | 344.3 | 195.4 | 53.9 |
+| **Médiane** | **46** | **491** | | **344.5** | **195.4** | **53.9** |
+
+Constat : la liste est peinte ≈ 80 ms après le début de la page, mais 491 ms après le lancement ; la cible « liste visible < 300 ms » n'est tenue que comptée depuis l'interface prête, le démarrage de WebView2 (≈ 410 ms) dépassant seul 300 ms. Mémoire propre 53,9 Mo avec 891 entrées, sous la cible de 150 Mo.

@@ -2,7 +2,9 @@
 .SYNOPSIS
   Cold-start and memory measurement of the release build (docs/perf.md).
 .DESCRIPTION
-  Starts the app N times. Per run: time until the main window exists, then, after a
+  Starts the app N times. Per run: time until the main window exists, time until the
+  program list's first rows are painted (the app writes that moment to the file named
+  by UNINSTALLER_PERF_LOG, in Unix milliseconds), then, after a
   settle delay, working set and private bytes summed over the app and every process
   it spawned (WebView2 browser, renderer, GPU...), plus "own" private bytes: the app
   process and the renderer, the part our code drives (PRODUCT.md budget). Prints one
@@ -42,7 +44,11 @@ function Get-Median([double[]]$Values) {
   $sorted[[int][math]::Floor($sorted.Count / 2)]
 }
 
+$perfLog = Join-Path ([IO.Path]::GetTempPath()) 'uninstaller-perf.log'
 $rows = foreach ($run in 1..$Runs) {
+  Remove-Item $perfLog -ErrorAction SilentlyContinue
+  $env:UNINSTALLER_PERF_LOG = $perfLog
+  $launched = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
   $clock = [Diagnostics.Stopwatch]::StartNew()
   $proc = Start-Process $Exe -PassThru
   while ($proc.MainWindowHandle -eq 0) {
@@ -51,11 +57,14 @@ $rows = foreach ($run in 1..$Runs) {
     $proc.Refresh()
   }
   $windowMs = $clock.ElapsedMilliseconds
+  while (-not (Test-Path $perfLog) -and $clock.Elapsed.TotalSeconds -lt 20) { Start-Sleep -Milliseconds 5 }
+  $listMs = if (Test-Path $perfLog) { [long](Get-Content $perfLog -TotalCount 1) - $launched } else { $null }
   Start-Sleep -Seconds $SettleSeconds
   $tree = @(Get-ProcessTree $proc.Id)
   $row = [pscustomobject]@{
     Run       = $run
     WindowMs  = $windowMs
+    ListMs    = $listMs
     Processes = $tree.Count
     WorkingMB = [math]::Round(($tree | Measure-Object WorkingSet64 -Sum).Sum / 1MB, 1)
     PrivateMB = [math]::Round(($tree | Measure-Object PrivateMemorySize64 -Sum).Sum / 1MB, 1)
@@ -67,7 +76,10 @@ $rows = foreach ($run in 1..$Runs) {
   $row
 }
 
-"| Lancement | Fenêtre (ms) | Processus | Working set (Mo) | Privé total (Mo) | Privé propre (Mo) |"
-"|---|---|---|---|---|---|"
-foreach ($r in $rows) { "| $($r.Run) | $($r.WindowMs) | $($r.Processes) | $($r.WorkingMB) | $($r.PrivateMB) | $($r.OwnMB) |" }
-"| **Médiane** | **$(Get-Median $rows.WindowMs)** | | **$(Get-Median $rows.WorkingMB)** | **$(Get-Median $rows.PrivateMB)** | **$(Get-Median $rows.OwnMB)** |"
+Remove-Item Env:UNINSTALLER_PERF_LOG
+Remove-Item $perfLog -ErrorAction SilentlyContinue
+
+"| Lancement | Fenêtre (ms) | Liste (ms) | Processus | Working set (Mo) | Privé total (Mo) | Privé propre (Mo) |"
+"|---|---|---|---|---|---|---|"
+foreach ($r in $rows) { "| $($r.Run) | $($r.WindowMs) | $($r.ListMs) | $($r.Processes) | $($r.WorkingMB) | $($r.PrivateMB) | $($r.OwnMB) |" }
+"| **Médiane** | **$(Get-Median $rows.WindowMs)** | **$(Get-Median $rows.ListMs)** | | **$(Get-Median $rows.WorkingMB)** | **$(Get-Median $rows.PrivateMB)** | **$(Get-Median $rows.OwnMB)** |"
