@@ -2,6 +2,7 @@
 #![deny(unsafe_code)]
 
 mod commands;
+mod core;
 #[allow(unsafe_code)]
 mod win;
 
@@ -9,7 +10,10 @@ use tauri_specta::{Builder, collect_commands};
 
 /// Every IPC command, listed once for both the app and the bindings export.
 fn ipc() -> Builder<tauri::Wry> {
-    Builder::<tauri::Wry>::new().commands(collect_commands![commands::app_info])
+    Builder::<tauri::Wry>::new().commands(collect_commands![
+        commands::app_info,
+        commands::list_programs
+    ])
 }
 
 pub fn run() {

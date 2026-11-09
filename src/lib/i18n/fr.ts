@@ -19,11 +19,32 @@ export const fr = {
     tracking: "Suivi",
     settings: "Réglages",
   },
+  programs: {
+    count: (n: number) => `${n} programme${n > 1 ? "s" : ""}`,
+    search: "Rechercher",
+    searchHint: "Rechercher par nom, éditeur, commentaire ou dossier",
+    sortBy: "Trier par",
+    sort: { name: "Nom", size: "Taille", date: "Date d'installation" },
+    list: "Programmes installés",
+    scope: { machine64: "64 bits", machine32: "32 bits", user: "Utilisateur" },
+    scopeHint: {
+      machine64: "Installé pour tous les utilisateurs, 64 bits",
+      machine32: "Installé pour tous les utilisateurs, 32 bits",
+      user: "Installé pour votre compte seulement",
+    },
+    noResults: {
+      title: "Aucun programme trouvé",
+      text: "Essayez un autre nom, un éditeur ou un morceau du dossier d'installation.",
+    },
+    error: {
+      title: "Impossible de lire la liste des programmes",
+      text: "Le registre n'a pas pu être lu. Réessayez ; si cela persiste, redémarrez l'application.",
+      retry: "Réessayer",
+    },
+  },
   /** Screens not built yet: what will be there, and when. */
   upcoming: {
     title: "Pas encore là",
-    programs:
-      "Phase 1 : la liste de vos programmes installés, avec recherche, tri, tailles et icônes.",
     apps: "Phase 5 : les applications du Microsoft Store et celles préinstallées.",
     extensions: "Phase 5 : les extensions de Chrome, Edge, Brave et Firefox.",
     tools:

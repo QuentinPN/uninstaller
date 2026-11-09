@@ -22,9 +22,21 @@ Invariants : une seule tâche active par programme ; rien n'est supprimé avant 
 | * (avant Quarantining) | cancel | Cancelled | |
 | * | error | Failed | |
 
-### 2. Scan des restes · 3. Lot en quarantaine (`Active → Restoring → Restored` / `Purging → Purged`) · 4. Session de suivi d'installation · 5. Mode Chasseur · 6. Chargement de l'inventaire (liste, tailles, icônes)
+### 6. Chargement de l'inventaire — liste (Phase 1, tranche 1)
 
-À détailler en Phase 1-8, au même format.
+`ProgramsView.svelte` : `programs = null` (chargement) · `programs = [...]` (chargé) · `failed = true` (erreur). Lecture seule, pas d'effet de bord : relancer est toujours sûr.
+
+| État | Événement | Suivant | UI |
+|---|---|---|---|
+| Loading | `listPrograms` résolu | Loaded | liste virtualisée, ou « Aucun programme trouvé » si le filtre vide la liste |
+| Loading | `listPrograms` rejeté | Failed | cause + « Réessayer » |
+| Failed | Réessayer | Loading | squelettes de lignes |
+
+Une source de registre illisible (clé absente, accès refusé) est ignorée côté Rust sans faire échouer l'ensemble. Tailles calculées et icônes en streaming : à ajouter ici avec leur tranche.
+
+### 2. Scan des restes · 3. Lot en quarantaine (`Active → Restoring → Restored` / `Purging → Purged`) · 4. Session de suivi d'installation · 5. Mode Chasseur
+
+À détailler en Phase 2-8, au même format.
 
 ## États ou transitions invalides trouvés
 

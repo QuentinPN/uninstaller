@@ -27,3 +27,7 @@ Répartition d'un lancement (privé) : application 7,6 Mo, rendu 27,2 Mo ; socle
 Essai sans effet : `additionalBrowserArgs` (`SpareRendererForSitePerProcess` désactivé, `--disable-background-networking`, `--disable-component-update`, `--renderer-process-limit=1`) → 160,6 Mo total contre 164,1, dans le bruit entre séries ; retiré.
 
 Constat : création de la fenêtre bien sous 1 s ; mémoire propre 34,8 Mo, sous la cible de 150 Mo.
+
+## 2026-11-09 — Phase 1, tranche 1 (inventaire registre)
+
+Même machine. `core::inventory::scan()` en release (`cargo test --release --lib scans_this_machine`, 3 exécutions) : 0,05 – 0,06 s pour 257 programmes affichés (HKLM 64/32 + HKCU). Le temps jusqu'à la liste visible (cible < 300 ms) sera instrumenté avec le premier rendu.

@@ -1,15 +1,20 @@
 <script lang="ts">
+import type { Snippet } from "svelte";
+
 interface Props {
   title: string;
   text: string;
+  /** Optional action under the text, such as "Réessayer". */
+  children?: Snippet;
 }
 
-let { title, text }: Props = $props();
+let { title, text, children }: Props = $props();
 </script>
 
 <div class="empty">
   <p class="title">{title}</p>
   <p class="text">{text}</p>
+  {@render children?.()}
 </div>
 
 <style>
@@ -23,7 +28,7 @@ let { title, text }: Props = $props();
     color: var(--color-text);
   }
   .text {
-    margin: 0;
+    margin: 0 0 var(--space-4);
     color: var(--color-text-secondary);
     line-height: 1.5;
   }

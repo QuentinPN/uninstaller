@@ -5,6 +5,11 @@ import { invoke as __TAURI_INVOKE } from "@tauri-apps/api/core";
 /** Commands */
 export const commands = {
 	appInfo: () => __TAURI_INVOKE<AppInfo>("app_info"),
+	/**
+	 *  Installed programs, sorted by name (F1). Async so the registry walk stays off the
+	 *  main thread.
+	 */
+	listPrograms: () => __TAURI_INVOKE<Program_Serialize[]>("list_programs"),
 };
 
 /* Types */
@@ -13,4 +18,66 @@ export type AppInfo = {
 	/**  Running with an administrator token (ADR 0002: normally false). */
 	elevated: boolean,
 };
+
+/**  What the entry is. Only `App` is shown by default (F1). */
+export type Kind = "app" | 
+/**  `SystemComponent = 1`: hidden by its installer. */
+"systemComponent" | 
+/**  An update or hotfix attached to another product. */
+"update";
+
+export type Program = Program_Serialize | Program_Deserialize;
+
+export type Program_Deserialize = {
+	/**  Opaque identifier (`scope\key`), the only handle the UI sends back. */
+	id: string,
+	name: string,
+	publisher?: string | null,
+	version?: string | null,
+	/**  `yyyy-mm-dd`: `InstallDate`, else the key's last write. */
+	installDate?: string | null,
+	/**  `EstimatedSize` in KiB, as declared by the installer. */
+	estimatedSizeKib?: number | null,
+	installLocation?: string | null,
+	uninstallString?: string | null,
+	quietUninstallString?: string | null,
+	displayIcon?: string | null,
+	url?: string | null,
+	comments?: string | null,
+	/**  Managed by Windows Installer (the key name is the MSI product code). */
+	msi: boolean,
+	scope: Scope,
+	kind: Kind,
+};
+
+export type Program_Serialize = {
+	/**  Opaque identifier (`scope\key`), the only handle the UI sends back. */
+	id: string,
+	name: string,
+	publisher: string | null,
+	version: string | null,
+	/**  `yyyy-mm-dd`: `InstallDate`, else the key's last write. */
+	installDate: string | null,
+	/**  `EstimatedSize` in KiB, as declared by the installer. */
+	estimatedSizeKib: number | null,
+	installLocation: string | null,
+	uninstallString: string | null,
+	quietUninstallString: string | null,
+	displayIcon: string | null,
+	url: string | null,
+	comments: string | null,
+	/**  Managed by Windows Installer (the key name is the MSI product code). */
+	msi: boolean,
+	scope: Scope,
+	kind: Kind,
+};
+
+/**  Where the program is registered. */
+export type Scope = 
+/**  HKLM, 64-bit view. */
+"machine64" | 
+/**  HKLM, 32-bit view (WOW6432Node). */
+"machine32" | 
+/**  HKCU: installed for the current user only. */
+"user";
 

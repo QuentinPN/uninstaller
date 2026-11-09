@@ -4,6 +4,7 @@ import { fr } from "./lib/i18n/fr";
 import { commands } from "./lib/ipc/bindings";
 import NavPill from "./lib/nav/NavPill.svelte";
 import { type SectionId, sectionForShortcut } from "./lib/nav/sections";
+import ProgramsView from "./lib/programs/ProgramsView.svelte";
 import EmptyState from "./lib/ui/EmptyState.svelte";
 import TitleBar from "./lib/window/TitleBar.svelte";
 
@@ -33,8 +34,12 @@ function onkeydown(event: KeyboardEvent) {
   <NavPill current={section} onselect={(id) => (section = id)} />
 </header>
 <main>
-  <h1>{fr.nav[section]}</h1>
-  <EmptyState title={fr.upcoming.title} text={fr.upcoming[section]} />
+  {#if section === "programs"}
+    <ProgramsView />
+  {:else}
+    <h1>{fr.nav[section]}</h1>
+    <EmptyState title={fr.upcoming.title} text={fr.upcoming[section]} />
+  {/if}
 </main>
 
 <style>
@@ -44,7 +49,11 @@ function onkeydown(event: KeyboardEvent) {
     padding: var(--space-3) var(--space-4);
   }
   main {
-    padding: 0 var(--space-8);
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    padding: 0 var(--space-8) var(--space-4);
   }
   h1 {
     margin: var(--space-6) 0 0;
