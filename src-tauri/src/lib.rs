@@ -40,6 +40,13 @@ fn icon_response(path: &str) -> tauri::http::Response<Vec<u8>> {
 }
 
 pub fn run() {
+    // The elevated broker (ADR 0002) is this same binary: it never starts Tauri.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [flag, pipe] = args.as_slice()
+        && flag == "--broker"
+    {
+        std::process::exit(core::broker::main(pipe));
+    }
     commands::prefetch_programs();
     // Moves a crash interrupted are settled before anything else touches the batches.
     if let Some(root) = core::quarantine::root() {
