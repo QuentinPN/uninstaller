@@ -7,6 +7,7 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -36,6 +37,8 @@ pub enum Error {
     OtherVolume,
     /// A key, subkey or value could not be read: nothing was saved or removed.
     Unreadable,
+    /// The batch is being purged: nothing goes in or comes back out.
+    Purging,
     Io(io::Error),
 }
 
@@ -49,6 +52,7 @@ impl fmt::Display for Error {
             Self::Corrupt => f.write_str("manifest corrupt"),
             Self::OtherVolume => f.write_str("other volume"),
             Self::Unreadable => f.write_str("key unreadable"),
+            Self::Purging => f.write_str("batch being purged"),
             Self::Io(error) => error.fmt(f),
         }
     }
@@ -93,16 +97,31 @@ pub struct Item {
     pub state: State,
 }
 
+/// `Active` holds items; `Purging` is written before the batch folder goes, so a purge
+/// a crash interrupted is finished at startup (STATE_MACHINES.md).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BatchState {
+    Active,
+    Purging,
+}
+
 #[derive(Serialize, Deserialize)]
 struct Manifest {
-    /// SHA-256 of `items` as written, to detect a damaged manifest.
+    /// SHA-256 of `created`, `state` and `items` as written, to detect a damaged
+    /// manifest.
     hash: String,
+    /// Seconds since the Unix epoch; the purge delay counts from here.
+    created: u64,
+    state: BatchState,
     items: Vec<Item>,
 }
 
 /// One cleanup's quarantine folder and its manifest.
 pub struct Batch {
     dir: PathBuf,
+    created: u64,
+    state: BatchState,
     items: Vec<Item>,
 }
 
@@ -113,8 +132,13 @@ impl Batch {
         let dir = root.join(name);
         fs::create_dir(&dir)?;
         fs::create_dir(dir.join(STORE))?;
+        let created = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |age| age.as_secs());
         let batch = Self {
             dir,
+            created,
+            state: BatchState::Active,
             items: Vec::new(),
         };
         batch.save()?;
@@ -125,11 +149,13 @@ impl Batch {
     pub fn open(dir: &Path) -> Result<Self, Error> {
         let manifest: Manifest =
             serde_json::from_slice(&fs::read(dir.join(MANIFEST))?).map_err(|_| Error::Corrupt)?;
-        if items_hash(&manifest.items)? != manifest.hash {
+        if content_hash(manifest.created, manifest.state, &manifest.items)? != manifest.hash {
             return Err(Error::Corrupt);
         }
         Ok(Self {
             dir: dir.to_path_buf(),
+            created: manifest.created,
+            state: manifest.state,
             items: manifest.items,
         })
     }
@@ -141,6 +167,7 @@ impl Batch {
     /// Moves `path` into the batch. The manifest names it `Pending` before the move
     /// and `Moved` after. A link or junction is moved itself, never followed.
     pub fn quarantine(&mut self, path: &Path) -> Result<(), Error> {
+        self.active()?;
         if protect::is_protected(path) {
             return Err(Error::Protected);
         }
@@ -186,6 +213,7 @@ impl Batch {
     /// batch as a `.reg`, then removes it: `Pending` before the save, `Copied` once the
     /// file is checked, `Moved` once the key is gone.
     pub fn quarantine_key(&mut self, key: &str) -> Result<(), Error> {
+        self.active()?;
         let (hive, path) = Hive::parse(key).ok_or(Error::Protected)?;
         if protect::is_protected_key(hive, path) {
             return Err(Error::Protected);
@@ -225,6 +253,7 @@ impl Batch {
     /// cannot go back (its origin exists again, or its content changed); the items
     /// already restored stay restored.
     pub fn restore(&mut self) -> Result<(), Error> {
+        self.active()?;
         for index in (0..self.items.len()).rev() {
             let item = &self.items[index];
             if item.state != State::Moved {
@@ -252,9 +281,12 @@ impl Batch {
     /// move at a time). `Pending` with its origin still there never left: a partial
     /// copy in the batch is dropped and so is the item; with only the batch holding
     /// it, it is `Moved` once its content checks out. `Copied` has a verified copy:
-    /// what remains of the origin goes and it is `Moved`. Running it again changes
-    /// nothing.
+    /// what remains of the origin goes and it is `Moved`. A `Purging` batch is
+    /// purged. Running it again changes nothing.
     pub fn resume(&mut self) -> Result<(), Error> {
+        if self.state == BatchState::Purging {
+            return self.remove();
+        }
         let Some(index) = self
             .items
             .iter()
@@ -295,6 +327,32 @@ impl Batch {
         }
     }
 
+    /// Removes the batch for good (ADR 0003: after the delay, or on a confirmed
+    /// request): an interrupted step is finished first, then `Purging` is written,
+    /// then the moved items go, then the manifest and the folder.
+    pub fn purge(mut self) -> Result<(), Error> {
+        self.resume()?;
+        self.state = BatchState::Purging;
+        self.save()?;
+        self.remove()
+    }
+
+    fn remove(&self) -> Result<(), Error> {
+        match fs::remove_dir_all(self.dir.join(STORE)) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error.into()),
+            _ => {}
+        }
+        fs::remove_dir_all(&self.dir)?;
+        Ok(())
+    }
+
+    fn active(&self) -> Result<(), Error> {
+        match self.state {
+            BatchState::Active => Ok(()),
+            BatchState::Purging => Err(Error::Purging),
+        }
+    }
+
     fn stored(&self, index: usize) -> PathBuf {
         self.dir.join(STORE).join(index.to_string())
     }
@@ -307,7 +365,9 @@ impl Batch {
     /// Writes the manifest next to it, then renames it over the old one.
     fn save(&self) -> Result<(), Error> {
         let manifest = Manifest {
-            hash: items_hash(&self.items)?,
+            hash: content_hash(self.created, self.state, &self.items)?,
+            created: self.created,
+            state: self.state,
             items: self.items.clone(),
         };
         let next = self.dir.join(MANIFEST_NEXT);
@@ -341,6 +401,30 @@ pub fn resume_all(root: &Path) -> usize {
                 .and_then(|mut batch| batch.resume())
                 .is_ok()
         })
+        .count()
+}
+
+/// Purges every batch under `root` created at least `delay` before `now`, and any
+/// `Purging` one. A batch that cannot be read is left for the Backups screen; returns
+/// how many were purged.
+pub fn purge_expired(root: &Path, delay: Duration, now: SystemTime) -> usize {
+    let Ok(entries) = fs::read_dir(root) else {
+        return 0;
+    };
+    let Some(limit) = now
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()
+        .and_then(|age| age.checked_sub(delay))
+    else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|entry| Batch::open(&entry.path()).ok())
+        .filter(|batch| batch.state == BatchState::Purging || batch.created <= limit.as_secs())
+        .map(Batch::purge)
+        .filter(Result::is_ok)
         .count()
 }
 
@@ -453,8 +537,8 @@ fn remove_tree(path: &Path) -> io::Result<()> {
     }
 }
 
-fn items_hash(items: &[Item]) -> Result<String, Error> {
-    let bytes = serde_json::to_vec(items).map_err(io::Error::other)?;
+fn content_hash(created: u64, state: BatchState, items: &[Item]) -> Result<String, Error> {
+    let bytes = serde_json::to_vec(&(created, state, items)).map_err(io::Error::other)?;
     Ok(hex(&Sha256::digest(bytes)))
 }
 
@@ -483,6 +567,54 @@ mod tests {
         fs::write(dir.join("app\\app.exe"), b"binary").unwrap();
         fs::write(dir.join("app\\data\\settings.ini"), b"[x]\ny=1").unwrap();
         dir
+    }
+
+    const FOURTEEN_DAYS: Duration = Duration::from_secs(14 * 24 * 3600);
+
+    #[test]
+    fn purges_only_expired_batches() {
+        let dir = sandbox("purge");
+        let root = dir.join("quarantine");
+        let mut old = Batch::create(&root, "old").unwrap();
+        old.quarantine(&dir.join("app\\app.exe")).unwrap();
+        fs::create_dir(dir.join("target")).unwrap();
+        fs::write(dir.join("target\\kept.txt"), b"kept").unwrap();
+        junction(&dir.join("app\\link"), &dir.join("target"));
+        old.quarantine(&dir.join("app\\link")).unwrap();
+        old.created -= FOURTEEN_DAYS.as_secs();
+        old.save().unwrap();
+        let mut recent = Batch::create(&root, "recent").unwrap();
+        recent.quarantine(&dir.join("app\\data")).unwrap();
+        fs::create_dir(root.join("damaged")).unwrap();
+        fs::write(root.join("damaged\\manifest.json"), b"{").unwrap();
+
+        assert_eq!(purge_expired(&root, FOURTEEN_DAYS, SystemTime::now()), 1);
+        assert!(!root.join("old").exists());
+        assert!(!dir.join("app\\app.exe").exists());
+        assert_eq!(fs::read(dir.join("target\\kept.txt")).unwrap(), b"kept");
+        assert_eq!(Batch::open(&root.join("recent")).unwrap().items().len(), 1);
+        assert!(root.join("damaged").exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn interrupted_purge_finishes_at_startup() {
+        let dir = sandbox("purge-resume");
+        let root = dir.join("quarantine");
+        let mut batch = Batch::create(&root, "lot").unwrap();
+        batch.quarantine(&dir.join("app\\data")).unwrap();
+        batch.state = BatchState::Purging;
+        batch.save().unwrap();
+        let mut batch = Batch::open(&root.join("lot")).unwrap();
+        assert!(matches!(batch.restore(), Err(Error::Purging)));
+        assert!(matches!(
+            batch.quarantine(&dir.join("app\\app.exe")),
+            Err(Error::Purging)
+        ));
+        assert!(dir.join("app\\app.exe").exists());
+        assert_eq!(resume_all(&root), 1);
+        assert!(!root.join("lot").exists());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
