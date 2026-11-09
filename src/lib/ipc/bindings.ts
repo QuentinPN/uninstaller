@@ -68,6 +68,8 @@ export type Program_Deserialize = {
 	/**  The other account's profile folder name, for `Scope::OtherUser`. */
 	profile?: string | null,
 	kind: Kind,
+	/**  Its uninstaller (or, without one, its declared folder) is gone from the disk (F3). */
+	orphan: boolean,
 };
 
 export type Program_Serialize = {
@@ -94,6 +96,8 @@ export type Program_Serialize = {
 	/**  The other account's profile folder name, for `Scope::OtherUser`. */
 	profile: string | null,
 	kind: Kind,
+	/**  Its uninstaller (or, without one, its declared folder) is gone from the disk (F3). */
+	orphan: boolean,
 };
 
 /**  Where the program is registered. */

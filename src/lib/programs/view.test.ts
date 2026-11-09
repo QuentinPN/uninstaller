@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Program } from "../ipc/bindings";
 import {
+  type Filter,
   type GroupKey,
   groupLabel,
   type ListView,
   type OptionalKind,
+  recentSince,
   type Sizes,
   type SortKey,
   totalSizeKib,
@@ -19,8 +21,17 @@ function view(
   sizes: Sizes = NONE,
   shown: ReadonlySet<OptionalKind> = new Set(),
   group: GroupKey = "none",
+  filters: ReadonlySet<Filter> = new Set(),
 ): ListView {
-  return { query, sort, group, sizes, shown };
+  return {
+    query,
+    sort,
+    group,
+    sizes,
+    shown,
+    filters,
+    recentSince: "2024-04-28",
+  };
 }
 
 function program(name: string, extra: Partial<Program> = {}): Program {
@@ -42,6 +53,7 @@ function program(name: string, extra: Partial<Program> = {}): Program {
     scope: "machine64",
     profile: null,
     kind: "app",
+    orphan: false,
     ...extra,
   };
 }
@@ -112,6 +124,37 @@ describe("visiblePrograms", () => {
       "zip",
       "Éditeur",
     ]);
+  });
+});
+
+describe("filters", () => {
+  const all = [
+    program("ancien", { installDate: "2024-04-27" }),
+    program("limite", { installDate: "2024-04-28" }),
+    program("neuf", { installDate: "2024-05-05", orphan: true }),
+    program("perdu", { orphan: true }),
+    program("sansDate"),
+  ];
+  const only = (...filters: Filter[]) =>
+    names(
+      visiblePrograms(
+        all,
+        view("", "name", NONE, new Set(), "none", new Set(filters)),
+      ),
+    );
+
+  it("keeps programs installed since the cutoff", () => {
+    expect(only("recent")).toEqual(["limite", "neuf"]);
+  });
+
+  it("keeps orphans, and both filters combine", () => {
+    expect(only("orphan")).toEqual(["neuf", "perdu"]);
+    expect(only("recent", "orphan")).toEqual(["neuf"]);
+  });
+
+  it("counts back seven local days, across a month", () => {
+    expect(recentSince(new Date(2024, 4, 5, 23, 30))).toBe("2024-04-28");
+    expect(recentSince(new Date(2024, 0, 3))).toBe("2023-12-27");
   });
 });
 

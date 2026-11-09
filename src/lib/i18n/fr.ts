@@ -54,6 +54,12 @@ export const fr = {
       "10 à 100 Mo",
       "Moins de 10 Mo",
     ],
+    filter: "Filtrer",
+    filters: { recent: "Récents", orphan: "Orphelins" },
+    recentHint: (days: number) => `Installés ces ${days} derniers jours`,
+    orphanHint: "Le désinstalleur ou le dossier du programme n'existe plus",
+    /** Tag on an orphan's row. */
+    orphan: "Absent du disque",
     show: "Afficher",
     /** Toggles for the kinds hidden by default, and the tag on their rows. */
     kinds: { systemComponent: "Composants système", update: "Mises à jour" },

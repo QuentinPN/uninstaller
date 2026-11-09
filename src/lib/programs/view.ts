@@ -1,4 +1,5 @@
-// What the Programs screen shows: default filter (F1), search, sort and grouping (F2).
+// What the Programs screen shows: default filter (F1), search, sort and grouping (F2),
+// recent and orphan filters (F3).
 
 import { formatMonth } from "../format";
 import { fr } from "../i18n/fr";
@@ -128,6 +129,35 @@ export const DEFAULT_COLUMNS: readonly Column[] = ["size", "date", "scope"];
 export const OPTIONAL_KINDS = ["systemComponent", "update"] as const;
 export type OptionalKind = (typeof OPTIONAL_KINDS)[number];
 
+/** Filters that narrow the list to what needs a look (F3). */
+export const FILTERS = ["recent", "orphan"] as const;
+export type Filter = (typeof FILTERS)[number];
+
+/** Installed this many days ago or less counts as recent. */
+export const RECENT_DAYS = 7;
+
+/** Earliest install date (`yyyy-mm-dd`, local time) still recent on `today`. */
+export function recentSince(today: Date): string {
+  const day = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate() - RECENT_DAYS,
+  );
+  return [day.getFullYear(), day.getMonth() + 1, day.getDate()]
+    .map((n) => String(n).padStart(2, "0"))
+    .join("-");
+}
+
+/** Dates are `yyyy-mm-dd`, so they compare as text. */
+export function isRecent(program: Program, since: string): boolean {
+  return program.installDate != null && program.installDate >= since;
+}
+
+const PASSES: Record<Filter, (program: Program, since: string) => boolean> = {
+  recent: isRecent,
+  orphan: (p) => p.orphan,
+};
+
 export interface ListView {
   query: string;
   sort: SortKey;
@@ -136,23 +166,30 @@ export interface ListView {
   sizes: Sizes;
   /** Optional kinds the user chose to show; applications are always shown. */
   shown: ReadonlySet<OptionalKind>;
+  /** Active filters; a program must pass every one. */
+  filters: ReadonlySet<Filter>;
+  /** From `recentSince`. */
+  recentSince: string;
 }
 
 function isShown(kind: Kind, shown: ReadonlySet<OptionalKind>): boolean {
   return kind === "app" || shown.has(kind);
 }
 
-/** Programs of the shown kinds matching the search, grouped then sorted. */
+/** Programs of the shown kinds passing the filters and the search, grouped then sorted. */
 export function visiblePrograms(
   all: readonly Program[],
-  { query, sort, group, sizes, shown }: ListView,
+  { query, sort, group, sizes, shown, filters, recentSince }: ListView,
 ): Program[] {
   const needle = normalize(query.trim());
   const within = COMPARE[sort](sizes);
   const groups = group === "none" ? null : compareGroups(group, sizes);
   return all
     .filter(
-      (p) => isShown(p.kind, shown) && (needle === "" || matches(p, needle)),
+      (p) =>
+        isShown(p.kind, shown) &&
+        [...filters].every((f) => PASSES[f](p, recentSince)) &&
+        (needle === "" || matches(p, needle)),
     )
     .sort((a, b) => (groups?.(a, b) ?? 0) || within(a, b));
 }

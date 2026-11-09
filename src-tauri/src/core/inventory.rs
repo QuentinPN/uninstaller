@@ -3,7 +3,7 @@
 use serde::Serialize;
 use specta::Type;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::core::registry::paths::Source;
 use crate::win::registry::Key;
@@ -70,14 +70,43 @@ pub struct Program {
     /// The other account's profile folder name, for `Scope::OtherUser`.
     pub profile: Option<String>,
     pub kind: Kind,
+    /// Its uninstaller (or, without one, its declared folder) is gone from the disk (F3).
+    pub orphan: bool,
 }
 
 impl Program {
     /// `InstallLocation` without the quotes some installers add, if it is a folder.
     pub fn install_folder(&self) -> Option<PathBuf> {
-        let location = self.install_location.as_deref()?.trim().trim_matches('"');
-        Some(PathBuf::from(location)).filter(|f| !location.is_empty() && f.is_dir())
+        self.declared_folder().filter(|f| f.is_dir())
     }
+
+    fn declared_folder(&self) -> Option<PathBuf> {
+        let location = self.install_location.as_deref()?.trim().trim_matches('"');
+        (!location.is_empty()).then(|| PathBuf::from(location))
+    }
+
+    /// The uninstaller named by full path is missing or, without an uninstall command,
+    /// the declared folder is. A command without a full path (`MsiExec.exe /X…`,
+    /// `%SystemRoot%\…`) proves nothing either way.
+    fn is_orphan(&self) -> bool {
+        match self.uninstall_string.as_deref() {
+            Some(command) => uninstaller_path(command).is_some_and(|exe| !exe.is_file()),
+            None => self.declared_folder().is_some_and(|f| !f.exists()),
+        }
+    }
+}
+
+/// The program file an uninstall command runs, when it names one by full path.
+fn uninstaller_path(command: &str) -> Option<PathBuf> {
+    let command = command.trim();
+    let path = match command.strip_prefix('"') {
+        Some(rest) => rest.split('"').next()?,
+        // Unquoted, maybe with spaces: up to the first ".exe" (ASCII lowercasing keeps
+        // byte offsets).
+        None => &command[..command.to_ascii_lowercase().find(".exe")? + 4],
+    };
+    let path = Path::new(path);
+    (path.is_absolute() && !path.to_string_lossy().contains('%')).then(|| path.to_path_buf())
 }
 
 /// Values of one Uninstall subkey; implemented by `win::registry::Key` and by test fakes.
@@ -108,7 +137,7 @@ pub fn scan() -> Vec<Program> {
         };
         for name in root.subkey_names() {
             if let Some(entry) = root.subkey(&name) {
-                programs.extend(parse(&source, &name, &entry));
+                programs.extend(parse(&source, &name, &entry).map(checked));
             }
         }
     }
@@ -120,7 +149,13 @@ pub fn scan() -> Vec<Program> {
 pub fn find(id: &str) -> Option<Program> {
     let (source, key_name) = Source::locate(id)?;
     let entry = source.open()?.subkey(key_name)?;
-    parse(&source, key_name, &entry)
+    parse(&source, key_name, &entry).map(checked)
+}
+
+/// Adds what the registry alone cannot tell: whether the program is still on disk.
+fn checked(mut program: Program) -> Program {
+    program.orphan = program.is_orphan();
+    program
 }
 
 /// One Uninstall subkey to a program; `None` without a display name.
@@ -162,6 +197,7 @@ pub fn parse(source: &Source, key_name: &str, entry: &impl Entry) -> Option<Prog
         scope: source.scope,
         profile: source.profile.as_ref().and_then(|p| p.name.clone()),
         kind,
+        orphan: false,
     })
 }
 
@@ -238,6 +274,7 @@ pub(crate) mod tests {
             scope: Scope::Machine64,
             profile: None,
             kind: Kind::App,
+            orphan: false,
         }
     }
 
@@ -364,6 +401,43 @@ pub(crate) mod tests {
         let programs = scan();
         assert!(!programs.is_empty());
         assert!(programs.iter().all(|p| !p.name.is_empty()));
+    }
+
+    #[test]
+    fn uninstaller_path_needs_a_full_path() {
+        let exe = |c: &str| uninstaller_path(c).map(|p| p.to_string_lossy().into_owned());
+        assert_eq!(
+            exe(r#""C:\Program Files\App\unins000.exe" /SILENT"#).as_deref(),
+            Some(r"C:\Program Files\App\unins000.exe")
+        );
+        assert_eq!(
+            exe(r"C:\Program Files\App\Uninstall.EXE /S").as_deref(),
+            Some(r"C:\Program Files\App\Uninstall.EXE")
+        );
+        for unknown in [
+            "MsiExec.exe /X{GUID}",
+            r"%SystemRoot%\System32\rundll32.exe x",
+            r"rundll32.exe C:\x.dll",
+            "",
+        ] {
+            assert_eq!(exe(unknown), None, "{unknown}");
+        }
+    }
+
+    #[test]
+    fn orphan_when_the_uninstaller_or_the_folder_is_gone() {
+        let here = std::env::current_exe().unwrap();
+        let gone = r"C:\Nope\Uninstaller-test";
+        let orphan = |uninstall: Option<String>, location: Option<&str>| {
+            let mut p = program("x", location);
+            p.uninstall_string = uninstall;
+            p.is_orphan()
+        };
+        assert!(!orphan(Some(format!(r#""{}" /S"#, here.display())), None));
+        assert!(orphan(Some(format!(r#""{gone}\unins000.exe" /S"#)), None));
+        assert!(!orphan(Some("MsiExec.exe /X{GUID}".into()), Some(gone)));
+        assert!(orphan(None, Some(gone)));
+        assert!(!orphan(None, None));
     }
 
     #[test]

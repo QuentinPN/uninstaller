@@ -14,10 +14,15 @@ import {
   COLUMNS,
   type Column,
   DEFAULT_COLUMNS,
+  FILTERS,
+  type Filter,
   type GroupKey,
   groupLabel,
+  isRecent,
   OPTIONAL_KINDS,
   type OptionalKind,
+  RECENT_DAYS,
+  recentSince,
   type SortKey,
   sizeKib,
   totalSizeKib,
@@ -32,6 +37,10 @@ const COLUMN_WIDTH: Record<Column, string> = {
   size: "10ch",
   date: "12ch",
   scope: "11ch",
+};
+const FILTER_HINT: Record<Filter, string> = {
+  recent: fr.programs.recentHint(RECENT_DAYS),
+  orphan: fr.programs.orphanHint,
 };
 /** Placeholder rows while the inventory loads. */
 const SKELETON_ROWS = 8;
@@ -49,9 +58,12 @@ let sizing = $state(false);
 let generation = 0;
 /** System components and updates the user chose to show (hidden by default, F1). */
 const shown = new SvelteSet<OptionalKind>();
+const filters = new SvelteSet<Filter>();
+/** Fixed for the session: recent means recent when the screen opened. */
+const since = recentSince(new Date());
 
-function toggle(kind: OptionalKind) {
-  if (!shown.delete(kind)) shown.add(kind);
+function toggle<T>(set: SvelteSet<T>, value: T) {
+  if (!set.delete(value)) set.add(value);
 }
 const columnSet = new SvelteSet<Column>(DEFAULT_COLUMNS);
 /** Chosen columns in their fixed order. */
@@ -63,10 +75,6 @@ const tracks = $derived(
     ...columns.map((c) => COLUMN_WIDTH[c]),
   ].join(" "),
 );
-
-function toggleColumn(column: Column) {
-  if (!columnSet.delete(column)) columnSet.add(column);
-}
 let detailsOpen = $state(false);
 let list = $state<VirtualList<Program>>();
 
@@ -83,7 +91,15 @@ const chosen = $derived(
 
 const visible = $derived(
   programs
-    ? visiblePrograms(programs, { query, sort, group, sizes, shown })
+    ? visiblePrograms(programs, {
+        query,
+        sort,
+        group,
+        sizes,
+        shown,
+        filters,
+        recentSince: since,
+      })
     : [],
 );
 
@@ -180,15 +196,27 @@ onMount(load);
         <input
           type="checkbox"
           checked={columnSet.has(column)}
-          onchange={() => toggleColumn(column)}
+          onchange={() => toggle(columnSet, column)}
         />
         {fr.programs.column[column]}
       </label>
     {/each}
   </div>
-  <div class="kinds" role="group" aria-label={fr.programs.show}>
+  <div class="toggles push" role="group" aria-label={fr.programs.filter}>
+    {#each FILTERS as filter (filter)}
+      <button
+        class="toggle"
+        aria-pressed={filters.has(filter)}
+        title={FILTER_HINT[filter]}
+        onclick={() => toggle(filters, filter)}
+      >
+        {fr.programs.filters[filter]}
+      </button>
+    {/each}
+  </div>
+  <div class="toggles" role="group" aria-label={fr.programs.show}>
     {#each OPTIONAL_KINDS as kind (kind)}
-      <button class="kind-toggle" aria-pressed={shown.has(kind)} onclick={() => toggle(kind)}>
+      <button class="toggle" aria-pressed={shown.has(kind)} onclick={() => toggle(shown, kind)}>
         {fr.programs.kinds[kind]}
       </button>
     {/each}
@@ -223,15 +251,20 @@ onMount(load);
   >
     {#snippet row(p: Program)}
       {@const size = sizeKib(p, sizes)}
+      {@const tags = [p.kind !== "app" ? fr.programs.kind[p.kind] : null, p.publisher]
+        .filter(Boolean)
+        .join(" · ")}
       <div class="program" style:grid-template-columns={tracks}>
         <AppIcon program={p} />
         <div class="names">
           <span class="name">{p.name}</span>
-          {#if p.kind !== "app" || p.publisher}
+          {#if p.orphan || tags}
             <span class="publisher">
-              {[p.kind !== "app" ? fr.programs.kind[p.kind] : null, p.publisher]
-                .filter(Boolean)
-                .join(" · ")}
+              {#if p.orphan}
+                <span class="orphan" title={fr.programs.orphanHint}>{fr.programs.orphan}</span>
+                {#if tags}·{/if}
+              {/if}
+              {tags}
             </span>
           {/if}
         </div>
@@ -241,7 +274,9 @@ onMount(load);
           {:else if column === "size"}
             <span class="cell num">{size != null ? formatSize(size) : ""}</span>
           {:else if column === "date"}
-            <span class="cell num">{p.installDate ? formatDate(p.installDate) : ""}</span>
+            <span class="cell num" class:recent={isRecent(p, since)}>
+              {p.installDate ? formatDate(p.installDate) : ""}
+            </span>
           {:else}
             <span class="badge" title={fr.programs.scopeHint[p.scope]}>
               {p.profile ?? fr.programs.scope[p.scope]}
@@ -310,7 +345,7 @@ onMount(load);
   .sort,
   .menu-button,
   .menu-item,
-  .kind-toggle {
+  .toggle {
     white-space: nowrap;
   }
   .sort {
@@ -330,12 +365,14 @@ onMount(load);
   option {
     background: var(--color-elevated);
   }
-  .kinds {
+  .toggles {
     display: flex;
     gap: var(--space-2);
+  }
+  .push {
     margin-left: auto;
   }
-  .kind-toggle {
+  .toggle {
     padding: var(--space-1) var(--space-3);
     border: none;
     border-radius: var(--radius-pill);
@@ -344,10 +381,10 @@ onMount(load);
     font-size: var(--font-size-sm);
     cursor: pointer;
   }
-  .kind-toggle:hover {
+  .toggle:hover {
     background: var(--fill-hover);
   }
-  .kind-toggle[aria-pressed="true"] {
+  .toggle[aria-pressed="true"] {
     background: var(--color-primary);
     color: var(--color-on-primary);
   }
@@ -387,6 +424,12 @@ onMount(load);
     text-align: right;
     white-space: nowrap;
     text-overflow: ellipsis;
+  }
+  .recent {
+    color: var(--color-accent);
+  }
+  .orphan {
+    color: var(--color-danger);
   }
   .menu-button {
     anchor-name: --columns;
