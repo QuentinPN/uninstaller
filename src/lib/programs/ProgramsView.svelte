@@ -158,13 +158,15 @@ function load() {
   );
 }
 
-/** Once rendered and painted: a timeout queued from a frame callback runs after
- * that frame's paint. */
+/** Once rendered and painted (a timeout queued from a frame callback runs after
+ * that frame's paint), with the time since the page started loading. */
 function reportShown() {
   if (reported) return;
   reported = true;
   tick().then(() =>
-    requestAnimationFrame(() => setTimeout(commands.listShown)),
+    requestAnimationFrame(() =>
+      setTimeout(() => commands.listShown(Math.round(performance.now()))),
+    ),
   );
 }
 

@@ -3,8 +3,9 @@
   Cold-start and memory measurement of the release build (docs/perf.md).
 .DESCRIPTION
   Starts the app N times. Per run: time until the main window exists, time until the
-  program list's first rows are painted (the app writes that moment to the file named
-  by UNINSTALLER_PERF_LOG, in Unix milliseconds), then, after a
+  program list's first rows are painted, counted from launch and from the page's start
+  (the target, PRODUCT.md; the app writes both to the file named by UNINSTALLER_PERF_LOG),
+  then, after a
   settle delay, working set and private bytes summed over the app and every process
   it spawned (WebView2 browser, renderer, GPU...), plus "own" private bytes: the app
   process and the renderer, the part our code drives (PRODUCT.md budget). Prints one
@@ -58,13 +59,17 @@ $rows = foreach ($run in 1..$Runs) {
   }
   $windowMs = $clock.ElapsedMilliseconds
   while (-not (Test-Path $perfLog) -and $clock.Elapsed.TotalSeconds -lt 20) { Start-Sleep -Milliseconds 5 }
-  $listMs = if (Test-Path $perfLog) { [long](Get-Content $perfLog -TotalCount 1) - $launched } else { $null }
+  # "<Unix ms> <ms since the page started>"
+  $shown = if (Test-Path $perfLog) { (Get-Content $perfLog -TotalCount 1) -split ' ' } else { @($null, $null) }
+  $listMs = if ($shown[0]) { [long]$shown[0] - $launched } else { $null }
+  $pageMs = if ($shown[1]) { [long]$shown[1] } else { $null }
   Start-Sleep -Seconds $SettleSeconds
   $tree = @(Get-ProcessTree $proc.Id)
   $row = [pscustomobject]@{
     Run       = $run
     WindowMs  = $windowMs
     ListMs    = $listMs
+    PageMs    = $pageMs
     Processes = $tree.Count
     WorkingMB = [math]::Round(($tree | Measure-Object WorkingSet64 -Sum).Sum / 1MB, 1)
     PrivateMB = [math]::Round(($tree | Measure-Object PrivateMemorySize64 -Sum).Sum / 1MB, 1)
@@ -79,7 +84,7 @@ $rows = foreach ($run in 1..$Runs) {
 Remove-Item Env:UNINSTALLER_PERF_LOG
 Remove-Item $perfLog -ErrorAction SilentlyContinue
 
-"| Lancement | Fenêtre (ms) | Liste (ms) | Processus | Working set (Mo) | Privé total (Mo) | Privé propre (Mo) |"
-"|---|---|---|---|---|---|---|"
-foreach ($r in $rows) { "| $($r.Run) | $($r.WindowMs) | $($r.ListMs) | $($r.Processes) | $($r.WorkingMB) | $($r.PrivateMB) | $($r.OwnMB) |" }
-"| **Médiane** | **$(Get-Median $rows.WindowMs)** | **$(Get-Median $rows.ListMs)** | | **$(Get-Median $rows.WorkingMB)** | **$(Get-Median $rows.PrivateMB)** | **$(Get-Median $rows.OwnMB)** |"
+"| Lancement | Fenêtre (ms) | Liste (ms) | Page → liste (ms) | Processus | Working set (Mo) | Privé total (Mo) | Privé propre (Mo) |"
+"|---|---|---|---|---|---|---|---|"
+foreach ($r in $rows) { "| $($r.Run) | $($r.WindowMs) | $($r.ListMs) | $($r.PageMs) | $($r.Processes) | $($r.WorkingMB) | $($r.PrivateMB) | $($r.OwnMB) |" }
+"| **Médiane** | **$(Get-Median $rows.WindowMs)** | **$(Get-Median $rows.ListMs)** | **$(Get-Median $rows.PageMs)** | | **$(Get-Median $rows.WorkingMB)** | **$(Get-Median $rows.PrivateMB)** | **$(Get-Median $rows.OwnMB)** |"

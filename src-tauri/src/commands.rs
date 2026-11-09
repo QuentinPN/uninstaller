@@ -48,12 +48,13 @@ pub async fn list_programs() -> Vec<Program> {
 /// `scripts/measure-startup.ps1` (docs/perf.md).
 const PERF_LOG: &str = "UNINSTALLER_PERF_LOG";
 
-/// The program list's first rows are painted. When measuring, appends the time
-/// (Unix milliseconds) to the file named by `UNINSTALLER_PERF_LOG`; otherwise does nothing.
-/// Takes nothing from the page: the path comes from whoever launched the app.
+/// The program list's first rows are painted, `page_ms` after the page started
+/// loading. When measuring, appends the time (Unix milliseconds) and `page_ms` to the
+/// file named by `UNINSTALLER_PERF_LOG`; otherwise does nothing. The path comes from whoever
+/// launched the app, never from the page, which only sends a number.
 #[tauri::command]
 #[specta::specta]
-pub fn list_shown() {
+pub fn list_shown(page_ms: u32) {
     let Some(path) = std::env::var_os(PERF_LOG) else {
         return;
     };
@@ -65,7 +66,7 @@ pub fn list_shown() {
         .create(true)
         .append(true)
         .open(path)
-        .and_then(|mut file| writeln!(file, "{}", now.as_millis()));
+        .and_then(|mut file| writeln!(file, "{} {page_ms}", now.as_millis()));
 }
 
 /// Opens a program's install folder in Explorer. Takes the opaque id, never a path:

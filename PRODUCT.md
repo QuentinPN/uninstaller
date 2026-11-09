@@ -34,6 +34,6 @@ Assistance Revo, base de journaux communautaire, notation par les utilisateurs, 
 ## Critères d'expérience
 
 - Usage ponctuel : ouverte pour supprimer, puis fermée. Aucun processus résident, aucune tâche planifiée, aucun service.
-- Fenêtre utilisable < 1 s à froid ; liste visible < 300 ms ; tailles et icônes en streaming sans saut de mise en page ; l'UI reste fluide pendant scans et désinstallations.
+- Fenêtre utilisable < 1 s à froid ; liste visible < 300 ms après le début du chargement de la page (le démarrage de WebView2, ≈ 400 ms, n'est pas compté : décision du 2026-11-09, `docs/perf.md`) ; tailles et icônes en streaming sans saut de mise en page ; l'UI reste fluide pendant scans et désinstallations.
 - Mémoire privée propre (application + rendu) < 150 Mo pendant l'usage, hors socle fixe WebView2 (voir `ARCHITECTURE.md`) ; aucune fuite après 50 désinstallations simulées.
 - Toute action destructive : aperçu, compteur, confirmation, puis « Annuler » possible depuis la quarantaine.

@@ -11,11 +11,12 @@ export const commands = {
 	 */
 	listPrograms: () => __TAURI_INVOKE<Program_Serialize[]>("list_programs"),
 	/**
-	 *  The program list's first rows are painted. When measuring, appends the time
-	 *  (Unix milliseconds) to the file named by `UNINSTALLER_PERF_LOG`; otherwise does nothing.
-	 *  Takes nothing from the page: the path comes from whoever launched the app.
+	 *  The program list's first rows are painted, `page_ms` after the page started
+	 *  loading. When measuring, appends the time (Unix milliseconds) and `page_ms` to the
+	 *  file named by `UNINSTALLER_PERF_LOG`; otherwise does nothing. The path comes from whoever
+	 *  launched the app, never from the page, which only sends a number.
 	 */
-	listShown: () => __TAURI_INVOKE<void>("list_shown"),
+	listShown: (pageMs: number) => __TAURI_INVOKE<void>("list_shown", { pageMs }),
 	/**
 	 *  Size on disk of every program with an install folder, sent in batches on `on_sizes`
 	 *  as folders finish (F1). Resolves once all are sent.

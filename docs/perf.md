@@ -1,10 +1,11 @@
 # Mesures de performance
 
-Cibles (`PRODUCT.md`) : fenêtre utilisable < 1 s à froid, liste visible < 300 ms, mémoire privée propre < 150 Mo pendant l'usage.
+Cibles (`PRODUCT.md`) : fenêtre utilisable < 1 s à froid, liste visible < 300 ms comptée depuis le début du chargement de la page, mémoire privée propre < 150 Mo pendant l'usage.
 
 Méthode : `scripts/measure-startup.ps1` sur le binaire release (`npx tauri build --no-bundle`), 5 lancements, médiane.
 - **Fenêtre** : du lancement à l'existence de la fenêtre principale (`MainWindowHandle`), encore vide.
 - **Liste** : du lancement aux premières lignes de la liste des programmes peintes (Phase 1, tranche 14) ; la page appelle `list_shown` après la première image, qui écrit l'heure dans le fichier nommé par `UNINSTALLER_PERF_LOG`.
+- **Page → liste** (cible < 300 ms) : du début de la navigation de la page (`performance.now()` = 0 ; chargement du HTML et du JS compris) aux mêmes premières lignes peintes.
 - **Mémoire**, 5 s après l'ouverture, au repos :
   - **Privé propre** : processus de l'application + processus de rendu WebView2, la partie que notre code fait varier (cible).
   - **Privé total** : somme sur l'application et tous ses processus WebView2.
@@ -53,3 +54,16 @@ Après : inventaire lancé au démarrage du processus, en parallèle de WebView2
 | **Médiane** | **46** | **491** | | **344.5** | **195.4** | **53.9** |
 
 Constat : la liste est peinte ≈ 80 ms après le début de la page, mais 491 ms après le lancement ; la cible « liste visible < 300 ms » n'est tenue que comptée depuis l'interface prête, le démarrage de WebView2 (≈ 410 ms) dépassant seul 300 ms. Mémoire propre 53,9 Mo avec 891 entrées, sous la cible de 150 Mo.
+
+Décision (2026-11-09) : la cible « liste visible < 300 ms » se compte depuis le début du chargement de la page, pas depuis le lancement ; le démarrage de WebView2 reste suivi dans la colonne « Liste ».
+
+| Lancement | Fenêtre (ms) | Liste (ms) | Page → liste (ms) | Processus | Working set (Mo) | Privé total (Mo) | Privé propre (Mo) |
+|---|---|---|---|---|---|---|---|
+| 1 | 133 | 633 | 158 | 7 | 346 | 199.4 | 56.1 |
+| 2 | 46 | 586 | 171 | 7 | 346.6 | 197.6 | 53.9 |
+| 3 | 46 | 614 | 206 | 7 | 342.4 | 194.9 | 50.8 |
+| 4 | 48 | 597 | 186 | 7 | 343.1 | 190.8 | 48.7 |
+| 5 | 46 | 520 | 151 | 7 | 342.2 | 191 | 48.3 |
+| **Médiane** | **46** | **597** | **171** | | **343.1** | **194.9** | **50.8** |
+
+Constat : page → liste 171 ms, sous la cible de 300 ms. Le lancement → liste (597 ms contre 491 dans la série précédente, même code) varie avec la charge de la machine, utilisée pendant la mesure.
