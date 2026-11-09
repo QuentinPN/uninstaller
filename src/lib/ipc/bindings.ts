@@ -32,6 +32,8 @@ export const commands = {
 	 *  (ADR 0003).
 	 */
 	purgeBatch: (name: string) => typedError<null, BatchFailure>(__TAURI_INVOKE("purge_batch", { name })),
+	/**  Creates a system restore point through the elevated broker (F12, SECURITY.md 4). */
+	createRestorePoint: () => typedError<RestorePoint, ElevationFailure>(__TAURI_INVOKE("create_restore_point")),
 	/**
 	 *  Size on disk of every program with an install folder, sent in batches on `on_sizes`
 	 *  as folders finish (F1). Resolves once all are sent.
@@ -86,6 +88,13 @@ export type BatchSummary = {
 	sizeKib: number,
 	purging: boolean,
 };
+
+/**  Why an elevated operation did not run. */
+export type ElevationFailure = 
+/**  The UAC prompt was refused: nothing changed. */
+"refused" | 
+/**  The broker did not start or did not answer. */
+"failed";
 
 /**
  *  An export built by the UI (it has the labels, the order and the measured sizes),
@@ -172,6 +181,16 @@ export type Program_Serialize = {
 	/**  Its uninstaller (or, without one, its declared folder) is gone from the disk (F3). */
 	orphan: boolean,
 };
+
+/**  What became of a `CreateRestorePoint`, also what the Backups screen shows. */
+export type RestorePoint = "created" | 
+/**
+ *  Windows created nothing: another point is more recent than its minimum
+ *  interval (`SystemRestorePointCreationFrequency`, 24 h by default).
+ */
+"skipped" | 
+/**  System Restore is turned off. */
+"disabled" | "failed";
 
 /**  Where the program is registered. */
 export type Scope = 

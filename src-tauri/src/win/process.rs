@@ -3,7 +3,7 @@
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::Path;
-use windows::Win32::Foundation::HANDLE;
+use windows::Win32::Foundation::{ERROR_CANCELLED, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
@@ -27,6 +27,12 @@ impl Process {
     pub fn wait(&self) {
         // SAFETY: `self.0` is a live process handle, which is waitable.
         unsafe { WaitForSingleObject(raw(&self.0), INFINITE) };
+    }
+
+    pub fn has_exited(&self) -> bool {
+        // SAFETY: `self.0` is a live process handle; a zero timeout only polls it.
+        let state = unsafe { WaitForSingleObject(raw(&self.0), 0) };
+        state == WAIT_OBJECT_0
     }
 
     pub fn try_clone(&self) -> io::Result<Self> {
@@ -85,6 +91,13 @@ pub fn run_as_admin(exe: &Path, parameters: &str) -> io::Result<Process> {
     }))
 }
 
+/// Whether `run_as_admin` failed because the user refused the UAC prompt. The code
+/// comes either as the Win32 error or wrapped in an HRESULT.
+pub fn is_refused(error: &io::Error) -> bool {
+    let code = error.raw_os_error();
+    code == Some(ERROR_CANCELLED.0 as i32) || code == Some(ERROR_CANCELLED.to_hresult().0)
+}
+
 /// The id of the process that started this one. Windows gives an elevated process
 /// the program that asked for it as parent, not the UAC service.
 pub fn parent_id() -> io::Result<u32> {
@@ -131,6 +144,17 @@ mod tests {
         let process = Process::from(child);
         assert_ne!(process.id(), 0);
         process.try_clone().expect("clone").wait();
+        assert!(process.has_exited());
+        assert!(!Process::current().expect("current").has_exited());
+    }
+
+    #[test]
+    fn a_refused_prompt_is_told_apart() {
+        assert!(is_refused(&io::Error::from_raw_os_error(1223)));
+        assert!(is_refused(
+            &windows::core::Error::from(ERROR_CANCELLED).into()
+        ));
+        assert!(!is_refused(&io::Error::from_raw_os_error(5)));
     }
 
     /// Cross-checks with Windows' own process list, read by PowerShell.

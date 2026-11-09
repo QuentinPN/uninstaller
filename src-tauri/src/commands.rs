@@ -4,16 +4,18 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::io::Write;
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tauri::ipc::Channel;
 
+use crate::core::broker::{Client, Reply, Request, RestorePoint};
 use crate::core::inventory::{self, Program};
 use crate::core::quarantine::{self, Batch, BatchSummary};
 use crate::core::sizes::{self, ProgramSize};
 use crate::win::dialog::{self, SaveAs};
+use crate::win::process;
 
 /// Facts about the running process, shown in the title bar.
 #[derive(Serialize, Type)]
@@ -114,6 +116,64 @@ pub async fn restore_batch(name: String) -> Result<(), BatchFailure> {
 #[specta::specta]
 pub async fn purge_batch(name: String) -> Result<(), BatchFailure> {
     on_batch(name, Batch::purge).await
+}
+
+/// Why an elevated operation did not run.
+#[derive(Debug, PartialEq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum ElevationFailure {
+    /// The UAC prompt was refused: nothing changed.
+    Refused,
+    /// The broker did not start or did not answer.
+    Failed,
+}
+
+impl From<std::io::Error> for ElevationFailure {
+    fn from(error: std::io::Error) -> Self {
+        if process::is_refused(&error) {
+            Self::Refused
+        } else {
+            Self::Failed
+        }
+    }
+}
+
+/// The broker session: one UAC prompt, then reused until the broker quits when idle.
+static BROKER: Mutex<Option<Client>> = Mutex::new(None);
+
+/// Sends `request` to the elevated broker, starting it (UAC prompt) when none runs.
+/// A failed call ends the session, so the next request starts a new one.
+fn elevated(request: &Request) -> Result<Reply, ElevationFailure> {
+    let mut session = BROKER.lock().unwrap_or_else(PoisonError::into_inner);
+    let client = match session.take().filter(Client::is_alive) {
+        Some(client) => client,
+        None => Client::start()?,
+    };
+    let reply = session.insert(client).call(request);
+    if reply.is_err() {
+        *session = None;
+    }
+    Ok(reply?)
+}
+
+/// The name Windows shows for points made from the Backups screen.
+const RESTORE_POINT_NAME: &str = "Uninstaller : point créé à la demande";
+
+/// Creates a system restore point through the elevated broker (F12, SECURITY.md 4).
+#[tauri::command]
+#[specta::specta]
+pub async fn create_restore_point() -> Result<RestorePoint, ElevationFailure> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let request = Request::CreateRestorePoint {
+            description: RESTORE_POINT_NAME.into(),
+        };
+        match elevated(&request)? {
+            Reply::RestorePoint(point) => Ok(point),
+            Reply::Pong { .. } => Err(ElevationFailure::Failed),
+        }
+    })
+    .await
+    .map_err(|_| ElevationFailure::Failed)?
 }
 
 /// Names the file where `list_shown` notes the time; set only by

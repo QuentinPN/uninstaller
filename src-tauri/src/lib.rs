@@ -17,6 +17,7 @@ fn ipc() -> Builder<tauri::Wry> {
         commands::list_quarantine,
         commands::restore_batch,
         commands::purge_batch,
+        commands::create_restore_point,
         commands::compute_sizes,
         commands::open_install_folder,
         commands::save_export

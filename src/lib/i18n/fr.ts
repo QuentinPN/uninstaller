@@ -151,6 +151,18 @@ export const fr = {
     /** The purge confirmation repeats what goes (DESIGN.md: no danger without a count). */
     confirmPurge: (contents: string, size: string) =>
       `Supprimer définitivement ${contents} · ${size} ? Ils ne pourront plus être restaurés.`,
+    createPoint: "Créer un point de restauration",
+    creatingPoint: "Création du point de restauration…",
+    /** After « Créer un point de restauration », by `RestorePoint` or `ElevationFailure`. */
+    point: {
+      created: "Point de restauration créé",
+      skipped:
+        "Windows n'a pas créé de point : le précédent est trop récent. Il reste utilisable.",
+      disabled:
+        "La protection du système est désactivée : aucun point n'a été créé.",
+      refused: "Autorisation administrateur refusée : rien n'a été modifié.",
+      failed: "Le point de restauration n'a pas pu être créé.",
+    },
     restored: (name: string) => `${name} restauré`,
     purged: (name: string) => `${name} purgé`,
     /** Why an action stopped, by `BatchFailure`. */

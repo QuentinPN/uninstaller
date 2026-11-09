@@ -18,6 +18,7 @@ let busy = $state<string | null>(null);
 /** The batch whose purge waits for confirmation. */
 let confirming = $state<string | null>(null);
 let notice = $state<{ text: string; failed: boolean } | null>(null);
+let creatingPoint = $state(false);
 const totalKib = $derived(
   batches?.reduce((sum, batch) => sum + batch.sizeKib, 0) ?? 0,
 );
@@ -52,6 +53,18 @@ async function act(
   load();
 }
 
+/** Asks the broker for a restore point; the UAC prompt shows the first time. */
+async function createPoint() {
+  creatingPoint = true;
+  notice = { text: t.creatingPoint, failed: false };
+  const result = await commands
+    .createRestorePoint()
+    .catch(() => ({ status: "error", error: "failed" }) as const);
+  const outcome = result.status === "ok" ? result.data : result.error;
+  notice = { text: t.point[outcome], failed: outcome !== "created" };
+  creatingPoint = false;
+}
+
 /** Moves keyboard focus to the safe choice when the confirmation opens. */
 function focus(node: HTMLElement) {
   node.focus();
@@ -77,6 +90,9 @@ onMount(load);
       {notice.text}
     </p>
   {/if}
+  <button class="action create" disabled={creatingPoint} onclick={createPoint}>
+    {t.createPoint}
+  </button>
 </header>
 
 {#if failed}
@@ -155,12 +171,18 @@ onMount(load);
   .summary {
     margin: 0;
     color: var(--color-text-secondary);
+    white-space: nowrap;
   }
   .notice {
     min-width: 0;
+    white-space: normal;
   }
   .failed {
     color: var(--color-danger);
+  }
+  .create {
+    flex: none;
+    margin-left: auto;
   }
   h2 {
     margin: 0 0 var(--space-2);

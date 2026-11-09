@@ -4,6 +4,7 @@
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use specta::Type;
 use std::fs::File;
 use std::hash::{BuildHasher, RandomState};
 use std::io::{self, ErrorKind, Read, Write};
@@ -44,8 +45,9 @@ pub enum Reply {
     RestorePoint(RestorePoint),
 }
 
-/// What became of a `CreateRestorePoint`.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+/// What became of a `CreateRestorePoint`, also what the Backups screen shows.
+#[derive(Debug, PartialEq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
 pub enum RestorePoint {
     Created,
     /// Windows created nothing: another point is more recent than its minimum
@@ -212,14 +214,13 @@ impl Watch {
 }
 
 /// The app's end of a broker session.
-pub struct Client(File);
+pub struct Client {
+    channel: File,
+    broker: Process,
+}
 
 impl Client {
     /// Starts the broker as administrator (one UAC prompt per session) and connects.
-    #[cfg_attr(
-        test,
-        expect(dead_code, reason = "shows the UAC prompt: tested through `launch`")
-    )]
     pub fn start() -> io::Result<Self> {
         let exe = std::env::current_exe()?;
         Self::launch(|name| process::run_as_admin(&exe, &format!("--broker {name}")))
@@ -242,12 +243,17 @@ impl Client {
         if pipe::client_pid(&channel)? != broker.id() {
             return Err(refused("pipe opened by another process"));
         }
-        Ok(Self(channel))
+        Ok(Self { channel, broker })
+    }
+
+    /// False once the broker has quit, after its idle time or a crash.
+    pub fn is_alive(&self) -> bool {
+        !self.broker.has_exited()
     }
 
     pub fn call(&mut self, request: &Request) -> io::Result<Reply> {
-        send(&mut self.0, request)?;
-        receive(&mut self.0)?
+        send(&mut self.channel, request)?;
+        receive(&mut self.channel)?
             .ok_or_else(|| io::Error::new(ErrorKind::BrokenPipe, "the broker has quit"))
     }
 }
@@ -342,6 +348,7 @@ mod tests {
     #[test]
     fn client_talks_to_its_broker() {
         let mut client = Client::launch(in_process).expect("launch");
+        assert!(client.is_alive());
         for _ in 0..2 {
             assert_eq!(
                 client.call(&Request::Ping).expect("call"),
@@ -386,16 +393,20 @@ mod tests {
     }
 
     /// The real elevated broker, `uninstaller.exe` next to the test binary: shows
-    /// the UAC prompt, so run by hand after `cargo build`, and accept the prompt.
-    fn elevated_client() -> Client {
-        let exe = std::env::current_exe().expect("exe");
+    /// the UAC prompt, so run by hand after `cargo build`.
+    fn launch_app() -> io::Result<Client> {
+        let exe = std::env::current_exe()?;
         let app = exe
             .parent()
             .and_then(|deps| deps.parent())
             .expect("target dir")
             .join("uninstaller.exe");
         Client::launch(|name| process::run_as_admin(&app, &format!("--broker {name}")))
-            .expect("launch")
+    }
+
+    /// Accept the prompt.
+    fn elevated_client() -> Client {
+        launch_app().expect("launch")
     }
 
     #[test]
@@ -405,6 +416,16 @@ mod tests {
             elevated_client().call(&Request::Ping).expect("call"),
             Reply::Pong { elevated: true }
         );
+    }
+
+    /// Refuse the UAC prompt (« Non »): the app must tell it from other failures.
+    #[test]
+    #[ignore = "administrateur : refuser l'invite UAC"]
+    fn refused_prompt_is_reported() {
+        let refused = launch_app()
+            .err()
+            .expect("the prompt was accepted, not refused");
+        assert!(process::is_refused(&refused), "{refused:?}");
     }
 
     /// Creates a real restore point on this PC: only with the user's consent.
