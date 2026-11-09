@@ -16,4 +16,4 @@
 
 ## Règle
 
-Aucun test sauté en silence : un test qui exige l'administrateur ou Windows se marque explicitement et la CI Windows l'exécute.
+Aucun test sauté en silence : un test qui exige l'administrateur ou Windows se marque explicitement et s'exécute en local (console administrateur ou VM) avant la fin de la phase concernée.

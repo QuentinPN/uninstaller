@@ -4,7 +4,7 @@ Statuts : À faire · En cours · Fait (avec preuve : commande, test ou capture)
 
 | Phase | Contenu | Fonctions | Statut |
 |-------|---------|-----------|--------|
-| 0 | Socle Tauri 2 + Svelte 5, config reprise d'Viewer, `npm run verify`, CI, ADR 0001-0003, barre de titre, navigation, mesure à vide | — | En cours — `npm run verify` à 0, `cargo deny check` ok, mesure dans `docs/perf.md` (fenêtre 32 ms, mémoire propre 34,8 Mo), icône = logo 12 « U-corbeille ». Reste : captures 125/150 %, CI jamais exécutée (pas de dépôt distant) |
+| 0 | Socle Tauri 2 + Svelte 5, config reprise d'Viewer, `npm run verify` (local, pas de CI), ADR 0001-0003, barre de titre, navigation, mesure à vide | — | En cours — `npm run verify` à 0 (deps comprises), mesure dans `docs/perf.md` (fenêtre 32 ms, mémoire propre 34,8 Mo), icône = logo 12 « U-corbeille ». Reste : captures 125/150 % |
 | 1 | Inventaire registre + MSI, liste virtualisée, recherche, tri, détails, icônes et tailles en streaming, export | F1 F2 F3 F19 | À faire |
 | 2 | Quarantaine, sauvegardes `.reg`, liste de protection, point de restauration, écran Sauvegardes | F12 | À faire |
 | 3 | Désinstallation guidée + scan des restes Sûr/Modéré/Avancé + arbre à cases | F4 F5 | À faire |

@@ -25,4 +25,4 @@ Lire l'inventaire, chercher et exporter ne demandent aucun droit. Désinstaller,
 ## Conséquences
 
 - Deux modes dans le même binaire : le point d'entrée analyse les arguments avant de lancer Tauri.
-- Les tests du protocole tournent sans élévation (tube local, broker simulé) ; les tests de bout en bout du broker sont marqués « administrateur » et exécutés en CI Windows.
+- Les tests du protocole tournent sans élévation (tube local, broker simulé) ; les tests de bout en bout du broker sont marqués « administrateur » et exécutés en local depuis une console administrateur ou dans la VM.

@@ -25,7 +25,7 @@ mod tests {
     use specta_typescript::Typescript;
     use std::{fs, path::Path};
 
-    /// Regenerates the bindings and fails if they were stale, so drift never passes CI.
+    /// Regenerates the bindings and fails if they were stale, so drift never passes `npm run verify`.
     #[test]
     fn bindings_are_up_to_date() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/lib/ipc/bindings.ts");
