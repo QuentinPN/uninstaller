@@ -23,6 +23,16 @@ export const commands = {
 	 */
 	listQuarantine: () => __TAURI_INVOKE<BatchSummary[]>("list_quarantine"),
 	/**
+	 *  Puts a batch's items back, last moved first (F12); stops at the first that cannot
+	 *  go back, the ones before it staying restored.
+	 */
+	restoreBatch: (name: string) => typedError<null, BatchFailure>(__TAURI_INVOKE("restore_batch", { name })),
+	/**
+	 *  Removes a batch for good, after the UI confirmed it with its count and size
+	 *  (ADR 0003).
+	 */
+	purgeBatch: (name: string) => typedError<null, BatchFailure>(__TAURI_INVOKE("purge_batch", { name })),
+	/**
 	 *  Size on disk of every program with an install folder, sent in batches on `on_sizes`
 	 *  as folders finish (F1). Resolves once all are sent.
 	 */
@@ -45,6 +55,21 @@ export type AppInfo = {
 	/**  Running with an administrator token (ADR 0002: normally false). */
 	elevated: boolean,
 };
+
+/**  Why a batch action stopped, for the Backups screen to word. */
+export type BatchFailure = 
+/**  The batch is gone (purged meanwhile) or its name is not a batch's. */
+"missing" | 
+/**  An item's origin exists again: nothing was overwritten. */
+"exists" | 
+/**  A kept item changed since it was moved. */
+"altered" | 
+/**  The manifest is damaged. */
+"corrupt" | 
+/**  The batch is being purged. */
+"purging" | 
+/**  Any other read or write error. */
+"failed";
 
 /**  What the Backups screen shows of a batch. Times are seconds since the Unix epoch. */
 export type BatchSummary = {

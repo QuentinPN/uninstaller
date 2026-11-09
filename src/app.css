@@ -137,6 +137,27 @@ h1 {
   letter-spacing: -0.02em;
 }
 
+/* A secondary action: a glass pill. `.danger` is the confirmed destructive one. */
+.action {
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--fill-glass);
+  cursor: pointer;
+  transition: background var(--motion-fast);
+}
+.action:hover:enabled {
+  background: var(--fill-glass-hover);
+}
+.action:disabled {
+  color: var(--color-text-muted);
+  cursor: default;
+}
+.action.danger {
+  background: var(--color-danger);
+  color: var(--color-on-primary);
+}
+
 /* Sizes, dates and counters line up in columns. */
 .num {
   font-variant-numeric: tabular-nums;

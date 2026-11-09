@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::ipc::Channel;
 
 use crate::core::inventory::{self, Program};
-use crate::core::quarantine::{self, BatchSummary};
+use crate::core::quarantine::{self, Batch, BatchSummary};
 use crate::core::sizes::{self, ProgramSize};
 use crate::win::dialog::{self, SaveAs};
 
@@ -53,6 +53,67 @@ pub async fn list_quarantine() -> Vec<BatchSummary> {
     quarantine::root()
         .map(|root| quarantine::list(&root))
         .unwrap_or_default()
+}
+
+/// Why a batch action stopped, for the Backups screen to word.
+#[derive(Debug, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum BatchFailure {
+    /// The batch is gone (purged meanwhile) or its name is not a batch's.
+    Missing,
+    /// An item's origin exists again: nothing was overwritten.
+    Exists,
+    /// A kept item changed since it was moved.
+    Altered,
+    /// The manifest is damaged.
+    Corrupt,
+    /// The batch is being purged.
+    Purging,
+    /// Any other read or write error.
+    Failed,
+}
+
+impl From<quarantine::Error> for BatchFailure {
+    fn from(error: quarantine::Error) -> Self {
+        use quarantine::Error;
+        match error {
+            Error::Exists => Self::Exists,
+            Error::Altered => Self::Altered,
+            Error::Corrupt => Self::Corrupt,
+            Error::Purging => Self::Purging,
+            Error::Io(e) if e.kind() == std::io::ErrorKind::NotFound => Self::Missing,
+            _ => Self::Failed,
+        }
+    }
+}
+
+/// Opens the batch the UI names and runs `action` on it, off the main thread.
+async fn on_batch(
+    name: String,
+    action: impl FnOnce(Batch) -> Result<(), quarantine::Error> + Send + 'static,
+) -> Result<(), BatchFailure> {
+    let dir = quarantine::root()
+        .and_then(|root| quarantine::batch_dir(&root, &name))
+        .ok_or(BatchFailure::Missing)?;
+    tauri::async_runtime::spawn_blocking(move || Ok(action(Batch::open(&dir)?)?))
+        .await
+        .map_err(|_| BatchFailure::Failed)?
+}
+
+/// Puts a batch's items back, last moved first (F12); stops at the first that cannot
+/// go back, the ones before it staying restored.
+#[tauri::command]
+#[specta::specta]
+pub async fn restore_batch(name: String) -> Result<(), BatchFailure> {
+    on_batch(name, |mut batch| batch.restore()).await
+}
+
+/// Removes a batch for good, after the UI confirmed it with its count and size
+/// (ADR 0003).
+#[tauri::command]
+#[specta::specta]
+pub async fn purge_batch(name: String) -> Result<(), BatchFailure> {
+    on_batch(name, Batch::purge).await
 }
 
 /// Names the file where `list_shown` notes the time; set only by

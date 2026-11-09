@@ -136,18 +136,35 @@ export const fr = {
   backups: {
     count: (n: number) => `${n} lot${n > 1 ? "s" : ""} en quarantaine`,
     quarantine: "Quarantaine",
-    /** What a batch still holds: "12 fichiers et dossiers · 3 clés". */
+    /** What a batch still holds: "12 éléments · 3 clés" (files, folders and links are elements). */
     contents: (files: number, keys: number) => {
       const parts = [];
-      if (files)
-        parts.push(
-          `${files} fichier${files > 1 ? "s" : ""} et dossier${files > 1 ? "s" : ""}`,
-        );
+      if (files) parts.push(`${files} élément${files > 1 ? "s" : ""}`);
       if (keys) parts.push(`${keys} clé${keys > 1 ? "s" : ""}`);
       return parts.length ? parts.join(" · ") : "Tout restauré";
     },
     purgeOn: (day: string) => `Purge le ${day}`,
     purging: "Purge en cours",
+    restore: "Restaurer",
+    purge: "Purger",
+    cancel: "Annuler",
+    /** The purge confirmation repeats what goes (DESIGN.md: no danger without a count). */
+    confirmPurge: (contents: string, size: string) =>
+      `Supprimer définitivement ${contents} · ${size} ? Ils ne pourront plus être restaurés.`,
+    restored: (name: string) => `${name} restauré`,
+    purged: (name: string) => `${name} purgé`,
+    /** Why an action stopped, by `BatchFailure`. */
+    failure: {
+      missing: "Ce lot n'existe plus.",
+      exists:
+        "Un élément est revenu à son emplacement d'origine : rien n'a été écrasé. Les éléments déjà remis en place le restent.",
+      altered:
+        "Un élément a changé depuis sa mise en quarantaine : il n'a pas été restauré.",
+      corrupt: "Le manifeste de ce lot est endommagé : rien n'a été modifié.",
+      purging: "Ce lot est en cours de purge.",
+      failed:
+        "L'opération a échoué. Réessayez ; si cela persiste, redémarrez l'application.",
+    },
     empty: {
       title: "Rien en quarantaine",
       text: "Ce qu'un nettoyage retire arrive ici et reste restaurable jusqu'à sa purge.",

@@ -443,6 +443,13 @@ pub fn resume_all(root: &Path) -> usize {
         .count()
 }
 
+/// The batch named `name` under `root`, if `name` is a plain folder name: the UI only
+/// sends back names it was given, but never a path.
+pub fn batch_dir(root: &Path, name: &str) -> Option<PathBuf> {
+    let plain = !matches!(name, "" | "." | "..") && !name.contains(['\\', '/', ':']);
+    plain.then(|| root.join(name))
+}
+
 /// Every batch under `root` that can be read, newest first.
 pub fn list(root: &Path) -> Vec<BatchSummary> {
     let mut batches: Vec<_> = batch_dirs(root)
@@ -661,6 +668,15 @@ mod tests {
         assert_eq!(Batch::open(&root.join("recent")).unwrap().items().len(), 1);
         assert!(root.join("damaged").exists());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn batch_names_never_leave_the_root() {
+        let root = Path::new(r"C:\q");
+        assert_eq!(batch_dir(root, "lot 1"), Some(root.join("lot 1")));
+        for name in ["", ".", "..", r"..\x", "a/b", r"C:\Windows", "C:x"] {
+            assert_eq!(batch_dir(root, name), None, "{name}");
+        }
     }
 
     #[test]

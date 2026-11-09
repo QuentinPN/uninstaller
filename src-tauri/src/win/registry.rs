@@ -78,10 +78,6 @@ impl View {
 
 /// One value as stored: its name (`""` for the default value), its type number and its raw
 /// bytes.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "Phase 2: tested now, called by the next slices")
-)]
 pub struct Value {
     pub name: String,
     pub kind: u32,

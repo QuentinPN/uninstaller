@@ -2,24 +2,59 @@
 import { onMount } from "svelte";
 import { formatDate, formatMoment, formatSize, isoDate } from "../format";
 import { fr } from "../i18n/fr";
-import { type BatchSummary, commands } from "../ipc/bindings";
+import {
+  type BatchFailure,
+  type BatchSummary,
+  commands,
+} from "../ipc/bindings";
 import EmptyState from "../ui/EmptyState.svelte";
 
 const t = fr.backups;
 
 let batches = $state<BatchSummary[] | null>(null);
 let failed = $state(false);
+/** The batch an action runs on; the others' buttons wait. */
+let busy = $state<string | null>(null);
+/** The batch whose purge waits for confirmation. */
+let confirming = $state<string | null>(null);
+let notice = $state<{ text: string; failed: boolean } | null>(null);
 const totalKib = $derived(
   batches?.reduce((sum, batch) => sum + batch.sizeKib, 0) ?? 0,
 );
 
 function load() {
-  batches = null;
   failed = false;
   commands.listQuarantine().then(
     (list) => (batches = list),
     () => (failed = true),
   );
+}
+
+/** Runs a batch action, then rereads the list, which shows what it changed. */
+async function act(
+  batch: BatchSummary,
+  run: (
+    name: string,
+  ) => Promise<{ status: "ok" } | { status: "error"; error: BatchFailure }>,
+  done: (name: string) => string,
+) {
+  busy = batch.name;
+  confirming = null;
+  notice = null;
+  const result = await run(batch.name).catch(
+    () => ({ status: "error", error: "failed" }) as const,
+  );
+  notice =
+    result.status === "ok"
+      ? { text: done(batch.name), failed: false }
+      : { text: t.failure[result.error], failed: true };
+  busy = null;
+  load();
+}
+
+/** Moves keyboard focus to the safe choice when the confirmation opens. */
+function focus(node: HTMLElement) {
+  node.focus();
 }
 
 /** Seconds since the Unix epoch to the local "23/11/2026". */
@@ -37,6 +72,11 @@ onMount(load);
       {t.count(batches.length)} · {formatSize(totalKib)}
     </p>
   {/if}
+  {#if notice}
+    <p class="summary notice" class:failed={notice.failed} role="status">
+      {notice.text}
+    </p>
+  {/if}
 </header>
 
 {#if failed}
@@ -47,19 +87,55 @@ onMount(load);
   <h2>{t.quarantine}</h2>
   <ul class="batches">
     {#each batches as batch (batch.name)}
+      {@const contents = t.contents(batch.files, batch.keys)}
       <li>
-        <div class="lines">
-          <span class="name">{batch.name}</span>
-          <span class="meta">
-            {formatMoment(batch.created)} · {t.contents(batch.files, batch.keys)}
-          </span>
+        <div class="row">
+          <div class="lines">
+            <span class="name">{batch.name}</span>
+            <span class="meta">{formatMoment(batch.created)} · {contents}</span>
+          </div>
+          <div class="lines end">
+            <span class="num">{formatSize(batch.sizeKib)}</span>
+            <span class="meta">
+              {batch.purging ? t.purging : t.purgeOn(day(batch.purgeOn))}
+            </span>
+          </div>
+          <!-- Hidden, not removed, so sizes and dates stay in one column. -->
+          <div class="buttons" class:hidden={confirming === batch.name}>
+            <button
+              class="action"
+              class:hidden={batch.files + batch.keys === 0 || batch.purging}
+              disabled={busy !== null}
+              onclick={() => act(batch, commands.restoreBatch, t.restored)}
+            >
+              {t.restore}
+            </button>
+            <button
+              class="action"
+              disabled={busy !== null}
+              onclick={() => (confirming = batch.name)}
+            >
+              {t.purge}
+            </button>
+          </div>
         </div>
-        <div class="lines end">
-          <span class="num">{formatSize(batch.sizeKib)}</span>
-          <span class="meta">
-            {batch.purging ? t.purging : t.purgeOn(day(batch.purgeOn))}
-          </span>
-        </div>
+        {#if confirming === batch.name}
+          <div class="confirm" role="alertdialog" aria-label={t.purge}>
+            <p>{t.confirmPurge(contents, formatSize(batch.sizeKib))}</p>
+            <div class="buttons">
+              <button class="action" use:focus onclick={() => (confirming = null)}>
+                {t.cancel}
+              </button>
+              <button
+                class="action danger"
+                disabled={busy !== null}
+                onclick={() => act(batch, commands.purgeBatch, t.purged)}
+              >
+                {t.purge}
+              </button>
+            </div>
+          </div>
+        {/if}
       </li>
     {/each}
   </ul>
@@ -80,6 +156,12 @@ onMount(load);
     margin: 0;
     color: var(--color-text-secondary);
   }
+  .notice {
+    min-width: 0;
+  }
+  .failed {
+    color: var(--color-danger);
+  }
   h2 {
     margin: 0 0 var(--space-2);
     color: var(--color-text-secondary);
@@ -95,23 +177,26 @@ onMount(load);
     list-style: none;
   }
   li {
-    display: flex;
-    justify-content: space-between;
-    gap: var(--space-4);
     padding: var(--space-3) var(--space-4);
   }
   li + li {
     border-top: 1px solid var(--separator);
   }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+  }
   .lines {
     display: flex;
+    flex: 1;
     flex-direction: column;
     gap: var(--space-1);
     min-width: 0;
   }
   .end {
+    flex: none;
     align-items: flex-end;
-    flex-shrink: 0;
   }
   .name {
     overflow: hidden;
@@ -121,5 +206,26 @@ onMount(load);
   .meta {
     color: var(--color-text-secondary);
     font-size: var(--font-size-sm);
+  }
+  .hidden {
+    visibility: hidden;
+  }
+  .buttons {
+    display: flex;
+    flex: none;
+    gap: var(--space-2);
+  }
+  .confirm {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--separator);
+  }
+  .confirm p {
+    margin: 0;
+    color: var(--color-text-secondary);
   }
 </style>

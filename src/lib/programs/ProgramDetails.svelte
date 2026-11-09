@@ -200,15 +200,6 @@ function openFolder() {
   }
   .action {
     align-self: flex-start;
-    padding: var(--space-2) var(--space-4);
-    border: none;
-    border-radius: var(--radius-pill);
-    background: var(--fill-glass);
-    cursor: pointer;
-    transition: background var(--motion-fast);
-  }
-  .action:hover {
-    background: var(--fill-glass-hover);
   }
   .status {
     min-height: 1lh;
