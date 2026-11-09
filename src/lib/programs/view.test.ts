@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { Program } from "../ipc/bindings";
 import { totalSizeKib, visiblePrograms } from "./view";
 
+const NONE = new Map<string, number>();
+
 function program(name: string, extra: Partial<Program> = {}): Program {
   return {
     id: `hklm64\\${name}`,
@@ -36,7 +38,7 @@ describe("visiblePrograms", () => {
   ];
 
   it("hides system components and updates", () => {
-    expect(names(visiblePrograms(all, "", "name"))).toEqual([
+    expect(names(visiblePrograms(all, "", "name", NONE))).toEqual([
       "archive",
       "Éditeur",
       "zip",
@@ -44,19 +46,34 @@ describe("visiblePrograms", () => {
   });
 
   it("searches name, publisher, comments and folder, ignoring accents and case", () => {
-    expect(names(visiblePrograms(all, "EDITEUR", "name"))).toEqual(["Éditeur"]);
-    expect(names(visiblePrograms(all, "uninstaller", "name"))).toEqual(["Éditeur"]);
+    expect(names(visiblePrograms(all, "EDITEUR", "name", NONE))).toEqual([
+      "Éditeur",
+    ]);
+    expect(names(visiblePrograms(all, "uninstaller", "name", NONE))).toEqual([
+      "Éditeur",
+    ]);
     const withFolder = [program("a", { installLocation: "C:\\Outils\\A" })];
-    expect(names(visiblePrograms(withFolder, "outils", "name"))).toEqual(["a"]);
+    expect(names(visiblePrograms(withFolder, "outils", "name", NONE))).toEqual([
+      "a",
+    ]);
+  });
+
+  it("sorts by measured size when there is one", () => {
+    const measured = new Map([[program("archive").id, 1000]]);
+    expect(names(visiblePrograms(all, "", "size", measured))).toEqual([
+      "archive",
+      "Éditeur",
+      "zip",
+    ]);
   });
 
   it("sorts size and date descending with unknown values last", () => {
-    expect(names(visiblePrograms(all, "", "size"))).toEqual([
+    expect(names(visiblePrograms(all, "", "size", NONE))).toEqual([
       "Éditeur",
       "zip",
       "archive",
     ]);
-    expect(names(visiblePrograms(all, "", "date"))).toEqual([
+    expect(names(visiblePrograms(all, "", "date", NONE))).toEqual([
       "archive",
       "zip",
       "Éditeur",
@@ -67,7 +84,16 @@ describe("visiblePrograms", () => {
 describe("totalSizeKib", () => {
   it("ignores unknown sizes", () => {
     expect(
-      totalSizeKib([program("a", { estimatedSizeKib: 5 }), program("b")]),
+      totalSizeKib([program("a", { estimatedSizeKib: 5 }), program("b")], NONE),
     ).toBe(5);
+  });
+
+  it("prefers the size measured on disk", () => {
+    const measured = new Map([[program("b").id, 7]]);
+    const list = [
+      program("a", { estimatedSizeKib: 5 }),
+      program("b", { estimatedSizeKib: 99 }),
+    ];
+    expect(totalSizeKib(list, measured)).toBe(12);
   });
 });

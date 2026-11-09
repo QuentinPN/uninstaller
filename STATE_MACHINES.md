@@ -34,7 +34,9 @@ Invariants : une seule tâche active par programme ; rien n'est supprimé avant 
 
 Panneau de détails (tranche 2) : fermé → ouvert par Espace ou double-clic sur la ligne sélectionnée ; ouvert, il suit la sélection ; Échap ou ✕ le ferme et rend le focus à la liste. Si le programme sélectionné disparaît (rechargement), le panneau se ferme de lui-même.
 
-Une source de registre illisible (clé absente, accès refusé) est ignorée côté Rust sans faire échouer l'ensemble. Tailles calculées et icônes en streaming : à ajouter ici avec leur tranche.
+Une source de registre illisible (clé absente, accès refusé) est ignorée côté Rust sans faire échouer l'ensemble. Icônes (tranche 4) : chaque ligne demande `icon://<id>` à l'affichage ; 404 ou image illisible → glyphe, retenu pour cette URL.
+
+Tailles calculées (tranche 5) : à chaque passage en Loaded, `computeSizes` part avec un nouveau `Channel` et `sizing = true` (« Calcul des tailles… » dans l'en-tête). Chaque paquet remplit `sizes` (id → Kio) ; liste, tri et totaux préfèrent la taille mesurée à la taille déclarée. Fin ou erreur → `sizing = false`, sans message : les tailles déclarées restent. Un « Réessayer » vide `sizes` et incrémente `generation` : les paquets d'un flux plus ancien sont ignorés.
 
 ### 2. Scan des restes · 3. Lot en quarantaine (`Active → Restoring → Restored` / `Purging → Purged`) · 4. Session de suivi d'installation · 5. Mode Chasseur
 

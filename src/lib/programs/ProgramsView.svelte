@@ -1,14 +1,16 @@
 <script lang="ts">
+import { Channel } from "@tauri-apps/api/core";
 import { onMount } from "svelte";
+import { SvelteMap } from "svelte/reactivity";
 import { formatDate, formatSize } from "../format";
 import { fr } from "../i18n/fr";
-import { commands, type Program } from "../ipc/bindings";
+import { commands, type Program, type ProgramSize } from "../ipc/bindings";
 import EmptyState from "../ui/EmptyState.svelte";
 import { EMPTY_SELECTION, type Selection } from "../ui/listNav";
 import VirtualList from "../ui/VirtualList.svelte";
 import AppIcon from "./AppIcon.svelte";
 import ProgramDetails from "./ProgramDetails.svelte";
-import { type SortKey, totalSizeKib, visiblePrograms } from "./view";
+import { type SortKey, sizeKib, totalSizeKib, visiblePrograms } from "./view";
 
 const SORT_KEYS: SortKey[] = ["name", "size", "date"];
 /** Placeholder rows while the inventory loads. */
@@ -19,6 +21,11 @@ let failed = $state(false);
 let query = $state("");
 let sort = $state<SortKey>("name");
 let selection = $state<Selection>(EMPTY_SELECTION);
+/** Sizes measured on disk, streamed in after the list is shown. */
+const sizes = new SvelteMap<string, number>();
+let sizing = $state(false);
+/** Bumped by each load, so a stale stream from before a retry is ignored. */
+let generation = 0;
 let detailsOpen = $state(false);
 let list = $state<VirtualList<Program>>();
 
@@ -34,16 +41,37 @@ const chosen = $derived(
 );
 
 const visible = $derived(
-  programs ? visiblePrograms(programs, query, sort) : [],
+  programs ? visiblePrograms(programs, query, sort, sizes) : [],
 );
 
 function load() {
+  const current = ++generation;
   programs = null;
   failed = false;
+  sizes.clear();
   commands.listPrograms().then(
-    (list) => (programs = list),
+    (list) => {
+      programs = list;
+      measure(current);
+    },
     () => (failed = true),
   );
+}
+
+function measure(current: number) {
+  const onSizes = new Channel<ProgramSize[]>();
+  onSizes.onmessage = (batch) => {
+    if (current !== generation) return;
+    for (const { id, sizeKib } of batch) sizes.set(id, sizeKib);
+  };
+  sizing = true;
+  // Without sizes the list still works on the declared ones: nothing to report.
+  commands
+    .computeSizes(onSizes)
+    .catch(() => {})
+    .finally(() => {
+      if (current === generation) sizing = false;
+    });
 }
 
 function closeDetails() {
@@ -64,12 +92,15 @@ onMount(load);
   <h1>{fr.nav.programs}</h1>
   {#if programs}
     <p class="summary num">
-      {fr.programs.count(visible.length)} · {formatSize(totalSizeKib(visible))}
+      {fr.programs.count(visible.length)} · {formatSize(totalSizeKib(visible, sizes))}
     </p>
     {#if chosen.length}
       <p class="summary chosen num">
-        {fr.programs.selected(chosen.length)} · {formatSize(totalSizeKib(chosen))}
+        {fr.programs.selected(chosen.length)} · {formatSize(totalSizeKib(chosen, sizes))}
       </p>
+    {/if}
+    {#if sizing}
+      <p class="summary" role="status">{fr.programs.sizing}</p>
     {/if}
   {/if}
 </header>
@@ -119,6 +150,7 @@ onMount(load);
     onopen={() => (detailsOpen = true)}
   >
     {#snippet row(p: Program)}
+      {@const size = sizeKib(p, sizes)}
       <div class="program">
         <AppIcon program={p} />
         <div class="names">
@@ -126,7 +158,7 @@ onMount(load);
           {#if p.publisher}<span class="publisher">{p.publisher}</span>{/if}
         </div>
         <span class="size num">
-          {p.estimatedSizeKib != null ? formatSize(p.estimatedSizeKib) : ""}
+          {size != null ? formatSize(size) : ""}
         </span>
         <span class="date num">{p.installDate ? formatDate(p.installDate) : ""}</span>
         <span class="badge" title={fr.programs.scopeHint[p.scope]}>
@@ -138,7 +170,7 @@ onMount(load);
 {/if}
 </div>
 {#if details}
-  <ProgramDetails program={details} onclose={closeDetails} />
+  <ProgramDetails program={details} diskSizeKib={sizes.get(details.id)} onclose={closeDetails} />
 {/if}
 </div>
 

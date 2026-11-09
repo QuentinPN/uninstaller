@@ -13,6 +13,7 @@ fn ipc() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(collect_commands![
         commands::app_info,
         commands::list_programs,
+        commands::compute_sizes,
         commands::open_install_folder
     ])
 }

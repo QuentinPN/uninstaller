@@ -3,6 +3,7 @@
 use serde::Serialize;
 use specta::Type;
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 use crate::core::registry::paths::{UNINSTALL, UNINSTALL_SOURCES, shown_key};
 use crate::win::registry::Key;
@@ -64,6 +65,14 @@ pub struct Program {
     pub registry_key: String,
     pub scope: Scope,
     pub kind: Kind,
+}
+
+impl Program {
+    /// `InstallLocation` without the quotes some installers add, if it is a folder.
+    pub fn install_folder(&self) -> Option<PathBuf> {
+        let location = self.install_location.as_deref()?.trim().trim_matches('"');
+        Some(PathBuf::from(location)).filter(|f| !location.is_empty() && f.is_dir())
+    }
 }
 
 /// Values of one Uninstall subkey; implemented by `win::registry::Key` and by test fakes.
@@ -204,9 +213,31 @@ fn date_from_filetime(filetime: u64) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    /// A bare program for tests of other modules.
+    pub(crate) fn program(id: &str, install_location: Option<&str>) -> Program {
+        Program {
+            id: id.into(),
+            name: id.into(),
+            publisher: None,
+            version: None,
+            install_date: None,
+            estimated_size_kib: None,
+            install_location: install_location.map(Into::into),
+            uninstall_string: None,
+            quiet_uninstall_string: None,
+            display_icon: None,
+            url: None,
+            comments: None,
+            msi: false,
+            registry_key: String::new(),
+            scope: Scope::Machine64,
+            kind: Kind::App,
+        }
+    }
 
     #[derive(Default)]
     struct Fake {

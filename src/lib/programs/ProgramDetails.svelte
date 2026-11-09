@@ -5,10 +5,12 @@ import { commands, type Program } from "../ipc/bindings";
 
 interface Props {
   program: Program;
+  /** Measured on disk; absent until computed or without an install folder. */
+  diskSizeKib: number | undefined;
   onclose: () => void;
 }
 
-let { program, onclose }: Props = $props();
+let { program, diskSizeKib, onclose }: Props = $props();
 
 const t = fr.programs.details;
 type Field = { label: string; value: string | null | undefined };
@@ -23,6 +25,10 @@ let statusTimer: ReturnType<typeof setTimeout> | undefined;
 const facts = $derived(
   (<Field[]>[
     { label: t.version, value: program.version },
+    {
+      label: t.diskSize,
+      value: diskSizeKib != null ? formatSize(diskSizeKib) : null,
+    },
     {
       label: t.size,
       value:
