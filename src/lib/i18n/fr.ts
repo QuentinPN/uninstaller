@@ -50,6 +50,10 @@ export const fr = {
       saved: (path: string) => `Liste exportée : ${path}`,
       failed: "L'export n'a pas pu être enregistré",
     },
+    viewAs: "Vue",
+    views: { details: "Détails", icons: "Icônes", list: "Liste" },
+    /** On « Colonnes » outside the Détails view. */
+    columnsDetailsOnly: "Les colonnes s'affichent dans la vue Détails",
     groupBy: "Regrouper",
     group: {
       none: "Aucun",

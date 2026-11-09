@@ -42,6 +42,13 @@
   /* Program list: fixed row height keeps virtualization exact. */
   --row-height: 44px;
   --icon-size: 28px;
+  /* « Icônes » and « Liste » views: fixed cells, laid out as a grid. */
+  --tile-width: 128px;
+  --tile-height: 112px;
+  --icon-size-large: 48px;
+  --list-cell-width: 280px;
+  --row-height-compact: 32px;
+  --icon-size-small: 20px;
   /* Details panel beside the list. */
   --panel-width: 340px;
   --motion-fast: 120ms;

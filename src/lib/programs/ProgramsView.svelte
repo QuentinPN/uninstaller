@@ -39,6 +39,9 @@ import {
 } from "./view";
 
 const GROUP_KEYS: GroupKey[] = ["none", "publisher", "date", "size"];
+/** Détails: a row with columns; Icônes and Liste: a grid of named icons. */
+type View = keyof typeof fr.programs.views;
+const VIEWS: View[] = ["details", "icons", "list"];
 /** Grid track of each optional column. */
 const COLUMN_WIDTH: Record<Column, string> = {
   version: "14ch",
@@ -59,6 +62,7 @@ let query = $state("");
 let sort = $state<SortKey>("name");
 let reversed = $state(false);
 let group = $state<GroupKey>("none");
+let view = $state<View>("details");
 let selection = $state<Selection>(EMPTY_SELECTION);
 /** Sizes measured on disk, streamed in after the list is shown. */
 const sizes = new SvelteMap<string, number>();
@@ -228,7 +232,21 @@ onMount(load);
       {/each}
     </select>
   </label>
-  <button class="menu-button" style:anchor-name="--columns" popovertarget="columns-menu">
+  <label class="sort">
+    {fr.programs.viewAs}
+    <select bind:value={view}>
+      {#each VIEWS as key (key)}
+        <option value={key}>{fr.programs.views[key]}</option>
+      {/each}
+    </select>
+  </label>
+  <button
+    class="menu-button"
+    style:anchor-name="--columns"
+    popovertarget="columns-menu"
+    disabled={view !== "details"}
+    title={view !== "details" ? fr.programs.columnsDetailsOnly : undefined}
+  >
     {fr.programs.columns}
   </button>
   <div class="menu" id="columns-menu" style:position-anchor="--columns" popover>
@@ -296,6 +314,7 @@ onMount(load);
 {:else if visible.length === 0}
   <EmptyState title={fr.programs.noResults.title} text={fr.programs.noResults.text} />
 {:else}
+  {#if view === "details"}
   <div class="columns-head" style:grid-template-columns={tracks}>
     <span></span>
     {#each ["name", ...columns] as SortKey[] as key (key)}
@@ -314,6 +333,10 @@ onMount(load);
       </button>
     {/each}
   </div>
+  {/if}
+  <!-- Remounted per view: the list reads its cell size from the view's tokens. -->
+  {#key view}
+  <div class="list-host {view}">
   <VirtualList
     bind:this={list}
     bind:selection
@@ -324,6 +347,21 @@ onMount(load);
     group={(p) => groupLabel(p, group, sizes)}
   >
     {#snippet row(p: Program)}
+      {#if view === "details"}
+        {@render detailsRow(p)}
+      {:else}
+        <div class="cell-item" title={p.orphan ? `${p.name} · ${fr.programs.orphan}` : p.name}>
+          <AppIcon program={p} />
+          <span class="cell-name" class:orphan={p.orphan}>{p.name}</span>
+        </div>
+      {/if}
+    {/snippet}
+  </VirtualList>
+  </div>
+  {/key}
+{/if}
+</div>
+{#snippet detailsRow(p: Program)}
       {@const size = sizeKib(p, sizes)}
       {@const tags = [p.kind !== "app" ? fr.programs.kind[p.kind] : null, p.publisher]
         .filter(Boolean)
@@ -358,10 +396,7 @@ onMount(load);
           {/if}
         {/each}
       </div>
-    {/snippet}
-  </VirtualList>
-{/if}
-</div>
+{/snippet}
 {#if details}
   <ProgramDetails program={details} diskSizeKib={sizes.get(details.id)} onclose={closeDetails} />
 {/if}
@@ -470,6 +505,51 @@ onMount(load);
     color: var(--color-on-primary);
     cursor: pointer;
   }
+  .list-host {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .icons {
+    --row-height: var(--tile-height);
+    --cell-width: var(--tile-width);
+    --icon-size: var(--icon-size-large);
+  }
+  .list {
+    --row-height: var(--row-height-compact);
+    --cell-width: var(--list-cell-width);
+    --icon-size: var(--icon-size-small);
+  }
+  .cell-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: 100%;
+    padding: 0 var(--space-3);
+  }
+  .icons .cell-item {
+    flex-direction: column;
+    justify-content: center;
+    padding: var(--space-2);
+    text-align: center;
+  }
+  .cell-name {
+    overflow: hidden;
+    min-width: 0;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .icons .cell-name {
+    display: -webkit-box;
+    width: 100%;
+    font-size: var(--font-size-sm);
+    white-space: normal;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
   .program {
     display: grid;
     align-items: center;
@@ -554,8 +634,12 @@ onMount(load);
     font-size: var(--font-size-sm);
     cursor: pointer;
   }
-  .menu-button:hover {
+  .menu-button:hover:enabled {
     background: var(--fill-hover);
+  }
+  .menu-button:disabled {
+    color: var(--color-text-muted);
+    cursor: default;
   }
   /* Anchored to its button (`position-anchor` set on each menu). */
   .menu {

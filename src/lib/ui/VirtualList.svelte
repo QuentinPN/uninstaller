@@ -2,6 +2,7 @@
 import { onMount, type Snippet } from "svelte";
 import {
   EMPTY_SELECTION,
+  layoutLines,
   nextIndex,
   pick,
   pickMode,
@@ -21,9 +22,6 @@ interface Props {
   group?: (item: T) => string | null;
 }
 
-/** A rendered line: a group heading (with its item count) or an item. */
-type Slot = { heading: string; count: number } | { index: number };
-
 let {
   items,
   key,
@@ -41,32 +39,30 @@ const uid = $props.id();
 let viewport: HTMLDivElement;
 let scrollTop = $state(0);
 let height = $state(0);
-// Read from --row-height once mounted: the CSS token stays the single source.
+let width = $state(0);
+// Read from the CSS tokens once mounted, so they stay the single source: a
+// container sets --row-height, and --cell-width to lay items out as a grid.
 let rowHeight = $state(0);
+let cellWidth = $state(0);
 
 onMount(() => {
-  rowHeight = Number.parseFloat(
-    getComputedStyle(viewport).getPropertyValue("--row-height"),
-  );
+  const style = getComputedStyle(viewport);
+  const token = (name: string) =>
+    Number.parseFloat(style.getPropertyValue(name)) || 0;
+  rowHeight = token("--row-height");
+  cellWidth = token("--cell-width");
 });
 
-/** Lines in display order, and the line of each item (headings shift items down). */
-const layout = $derived.by(() => {
-  const slots: Slot[] = [];
-  const lineOf: number[] = [];
-  let current: { heading: string; count: number } | null = null;
-  items.forEach((item, index) => {
-    const heading = group?.(item) ?? null;
-    if (heading !== null && heading !== current?.heading) {
-      current = { heading, count: 0 };
-      slots.push(current);
-    }
-    if (current && heading !== null) current.count++;
-    lineOf.push(slots.length);
-    slots.push({ index });
-  });
-  return { slots, lineOf };
-});
+/** Items per line: as many cells as fit, one without a cell width. */
+const columns = $derived(
+  cellWidth ? Math.max(1, Math.floor(width / cellWidth)) : 1,
+);
+const layout = $derived(
+  layoutLines(
+    items.map((item) => group?.(item) ?? null),
+    columns,
+  ),
+);
 
 const start = $derived(
   rowHeight ? Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN) : 0,
@@ -74,7 +70,7 @@ const start = $derived(
 const end = $derived(
   rowHeight
     ? Math.min(
-        layout.slots.length,
+        layout.lines.length,
         Math.ceil((scrollTop + height) / rowHeight) + OVERSCAN,
       )
     : 0,
@@ -112,7 +108,7 @@ function onkeydown(event: KeyboardEvent) {
     return;
   }
   const page = Math.max(1, Math.floor(height / rowHeight) - 1);
-  const next = nextIndex(event.code, current, items.length, page);
+  const next = nextIndex(event.code, current, layout, columns, page);
   if (next === null) return;
   event.preventDefault();
   // nextIndex stays within the list.
@@ -130,37 +126,38 @@ function onkeydown(event: KeyboardEvent) {
   aria-activedescendant={activeIndex >= 0 ? rowId(activeIndex) : undefined}
   bind:this={viewport}
   bind:clientHeight={height}
+  bind:clientWidth={width}
   onscroll={() => (scrollTop = viewport.scrollTop)}
   {onkeydown}
 >
-  <div class="spacer" style:height="{layout.slots.length * rowHeight}px">
-    {#each layout.slots.slice(start, end) as slot, i ("index" in slot ? key(items[slot.index] as T) : `heading:${slot.heading}`)}
-      {#if "index" in slot}
-        {@const item = items[slot.index] as T}
-        <!-- Options are not focusable: the listbox keeps focus and points at the
-             selected row (aria-activedescendant), which also handles the keyboard. -->
-        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_interactive_supports_focus -->
-        <div
-          class="row"
-          id={rowId(slot.index)}
-          role="option"
-          aria-selected={selection.keys.has(key(item))}
-          aria-setsize={items.length}
-          aria-posinset={slot.index + 1}
-          style:transform="translateY({(start + i) * rowHeight}px)"
-          onclick={(event) =>
-            (selection = pick(order, selection, key(item), pickMode(event)))}
-          ondblclick={() => onopen?.(item)}
-        >
-          {@render row(item)}
-        </div>
+  <div class="spacer" style:height="{layout.lines.length * rowHeight}px">
+    {#each layout.lines.slice(start, end) as line, i ("items" in line ? key(items[line.items[0] ?? 0] as T) : `heading:${line.heading}`)}
+      {@const top = (start + i) * rowHeight}
+      {#if "items" in line}
+        {#each line.items as index, column (key(items[index] as T))}
+          {@const item = items[index] as T}
+          <!-- Options are not focusable: the listbox keeps focus and points at the
+               selected row (aria-activedescendant), which also handles the keyboard. -->
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_interactive_supports_focus -->
+          <div
+            class="row"
+            id={rowId(index)}
+            role="option"
+            aria-selected={selection.keys.has(key(item))}
+            aria-setsize={items.length}
+            aria-posinset={index + 1}
+            style:width="{100 / columns}%"
+            style:transform="translate({column * 100}%, {top}px)"
+            onclick={(event) =>
+              (selection = pick(order, selection, key(item), pickMode(event)))}
+            ondblclick={() => onopen?.(item)}
+          >
+            {@render row(item)}
+          </div>
+        {/each}
       {:else}
-        <div
-          class="heading"
-          role="presentation"
-          style:transform="translateY({(start + i) * rowHeight}px)"
-        >
-          {slot.heading}<span class="count num">{slot.count}</span>
+        <div class="heading" role="presentation" style:transform="translateY({top}px)">
+          {line.heading}<span class="count num">{line.count}</span>
         </div>
       {/if}
     {/each}
@@ -185,7 +182,7 @@ function onkeydown(event: KeyboardEvent) {
   }
   .row {
     position: absolute;
-    inset: 0 0 auto;
+    inset: 0 auto auto 0;
     height: var(--row-height);
     border-radius: var(--radius-sm);
     transition: background var(--motion-fast);
