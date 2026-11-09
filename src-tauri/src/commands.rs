@@ -12,7 +12,7 @@ use tauri::ipc::Channel;
 
 use crate::core::broker::{Client, Reply, Request, RestorePoint};
 use crate::core::inventory::{self, Program};
-use crate::core::quarantine::{self, Batch, BatchSummary};
+use crate::core::quarantine::{self, BatchAction, BatchFailure, BatchSummary};
 use crate::core::sizes::{self, ProgramSize};
 use crate::win::dialog::{self, SaveAs};
 use crate::win::process;
@@ -57,49 +57,26 @@ pub async fn list_quarantine() -> Vec<BatchSummary> {
         .unwrap_or_default()
 }
 
-/// Why a batch action stopped, for the Backups screen to word.
-#[derive(Debug, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub enum BatchFailure {
-    /// The batch is gone (purged meanwhile) or its name is not a batch's.
-    Missing,
-    /// An item's origin exists again: nothing was overwritten.
-    Exists,
-    /// A kept item changed since it was moved.
-    Altered,
-    /// The manifest is damaged.
-    Corrupt,
-    /// The batch is being purged.
-    Purging,
-    /// Any other read or write error.
-    Failed,
-}
-
-impl From<quarantine::Error> for BatchFailure {
-    fn from(error: quarantine::Error) -> Self {
-        use quarantine::Error;
-        match error {
-            Error::Exists => Self::Exists,
-            Error::Altered => Self::Altered,
-            Error::Corrupt => Self::Corrupt,
-            Error::Purging => Self::Purging,
-            Error::Io(e) if e.kind() == std::io::ErrorKind::NotFound => Self::Missing,
-            _ => Self::Failed,
+/// Runs `action` on the batch the UI names, off the main thread. When Windows denies
+/// access (an HKLM key, a file from Program Files), the elevated broker runs it again:
+/// items already done stay done and the broker carries on from there.
+async fn on_batch(name: String, action: BatchAction) -> Result<(), BatchFailure> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = quarantine::root().ok_or(BatchFailure::Missing)?;
+        match action.run(&root, &name) {
+            Err(error) if quarantine::needs_admin(&error) => {
+                match elevated(&Request::Batch { action, name }) {
+                    Ok(Reply::Batch(result)) => result,
+                    Ok(_) => Err(BatchFailure::Failed),
+                    Err(ElevationFailure::Refused) => Err(BatchFailure::Refused),
+                    Err(ElevationFailure::Failed) => Err(BatchFailure::Failed),
+                }
+            }
+            done => Ok(done?),
         }
-    }
-}
-
-/// Opens the batch the UI names and runs `action` on it, off the main thread.
-async fn on_batch(
-    name: String,
-    action: impl FnOnce(Batch) -> Result<(), quarantine::Error> + Send + 'static,
-) -> Result<(), BatchFailure> {
-    let dir = quarantine::root()
-        .and_then(|root| quarantine::batch_dir(&root, &name))
-        .ok_or(BatchFailure::Missing)?;
-    tauri::async_runtime::spawn_blocking(move || Ok(action(Batch::open(&dir)?)?))
-        .await
-        .map_err(|_| BatchFailure::Failed)?
+    })
+    .await
+    .map_err(|_| BatchFailure::Failed)?
 }
 
 /// Puts a batch's items back, last moved first (F12); stops at the first that cannot
@@ -107,7 +84,7 @@ async fn on_batch(
 #[tauri::command]
 #[specta::specta]
 pub async fn restore_batch(name: String) -> Result<(), BatchFailure> {
-    on_batch(name, |mut batch| batch.restore()).await
+    on_batch(name, BatchAction::Restore).await
 }
 
 /// Removes a batch for good, after the UI confirmed it with its count and size
@@ -115,7 +92,7 @@ pub async fn restore_batch(name: String) -> Result<(), BatchFailure> {
 #[tauri::command]
 #[specta::specta]
 pub async fn purge_batch(name: String) -> Result<(), BatchFailure> {
-    on_batch(name, Batch::purge).await
+    on_batch(name, BatchAction::Purge).await
 }
 
 /// Why an elevated operation did not run.
@@ -169,7 +146,7 @@ pub async fn create_restore_point() -> Result<RestorePoint, ElevationFailure> {
         };
         match elevated(&request)? {
             Reply::RestorePoint(point) => Ok(point),
-            Reply::Pong { .. } => Err(ElevationFailure::Failed),
+            _ => Err(ElevationFailure::Failed),
         }
     })
     .await

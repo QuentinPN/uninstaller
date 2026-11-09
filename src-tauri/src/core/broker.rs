@@ -11,6 +11,7 @@ use std::io::{self, ErrorKind, Read, Write};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use crate::core::quarantine::{self, BatchAction, BatchFailure};
 use crate::core::registry::paths::SYSTEM_RESTORE;
 use crate::win::process::{self, Process};
 use crate::win::registry::{Hive, Key, View};
@@ -33,6 +34,9 @@ pub enum Request {
     Ping,
     /// A system restore point named `description`, before a change (SECURITY.md 4).
     CreateRestorePoint { description: String },
+    /// Restores or purges the batch `name` of the quarantine, when the app was denied
+    /// access. A name, never a path: the broker finds the batch itself.
+    Batch { action: BatchAction, name: String },
 }
 
 /// The broker's answer to one `Request`.
@@ -43,6 +47,7 @@ pub enum Reply {
         elevated: bool,
     },
     RestorePoint(RestorePoint),
+    Batch(Result<(), BatchFailure>),
 }
 
 /// What became of a `CreateRestorePoint`, also what the Backups screen shows.
@@ -162,6 +167,11 @@ fn answer(request: Request) -> Reply {
         Request::CreateRestorePoint { description } => {
             Reply::RestorePoint(restore_point(&description))
         }
+        Request::Batch { action, name } => Reply::Batch(
+            quarantine::root()
+                .ok_or(BatchFailure::Missing)
+                .and_then(|root| Ok(action.run(&root, &name)?)),
+        ),
     }
 }
 
@@ -415,6 +425,20 @@ mod tests {
         assert_eq!(
             elevated_client().call(&Request::Ping).expect("call"),
             Reply::Pong { elevated: true }
+        );
+    }
+
+    /// Changes nothing: the batch does not exist. Accept the prompt.
+    #[test]
+    #[ignore = "administrateur : affiche l'invite UAC"]
+    fn elevated_broker_runs_batch_actions() {
+        let request = Request::Batch {
+            action: BatchAction::Restore,
+            name: "uninstaller-lot-absent".into(),
+        };
+        assert_eq!(
+            elevated_client().call(&request).expect("call"),
+            Reply::Batch(Err(BatchFailure::Missing))
         );
     }
 

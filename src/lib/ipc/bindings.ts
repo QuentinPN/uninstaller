@@ -70,6 +70,8 @@ export type BatchFailure =
 "corrupt" | 
 /**  The batch is being purged. */
 "purging" | 
+/**  The UAC prompt was refused; items already done stay done. */
+"refused" | 
 /**  Any other read or write error. */
 "failed";
 

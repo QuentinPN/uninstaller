@@ -69,6 +69,64 @@ impl From<io::Error> for Error {
     }
 }
 
+/// Why a batch action stopped, for the Backups screen to word.
+#[derive(Debug, PartialEq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum BatchFailure {
+    /// The batch is gone (purged meanwhile) or its name is not a batch's.
+    Missing,
+    /// An item's origin exists again: nothing was overwritten.
+    Exists,
+    /// A kept item changed since it was moved.
+    Altered,
+    /// The manifest is damaged.
+    Corrupt,
+    /// The batch is being purged.
+    Purging,
+    /// The UAC prompt was refused; items already done stay done.
+    Refused,
+    /// Any other read or write error.
+    Failed,
+}
+
+impl From<Error> for BatchFailure {
+    fn from(error: Error) -> Self {
+        match error {
+            Error::Exists => Self::Exists,
+            Error::Altered => Self::Altered,
+            Error::Corrupt => Self::Corrupt,
+            Error::Purging => Self::Purging,
+            Error::Io(e) if e.kind() == std::io::ErrorKind::NotFound => Self::Missing,
+            _ => Self::Failed,
+        }
+    }
+}
+
+/// What the Backups screen does to a batch, named so the broker can run it too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BatchAction {
+    Restore,
+    Purge,
+}
+
+impl BatchAction {
+    /// Runs on the batch `name` under `root`; a name that is not a batch's is
+    /// `NotFound`.
+    pub fn run(self, root: &Path, name: &str) -> Result<(), Error> {
+        let dir = batch_dir(root, name).ok_or(io::Error::from(io::ErrorKind::NotFound))?;
+        let mut batch = Batch::open(&dir)?;
+        match self {
+            Self::Restore => batch.restore(),
+            Self::Purge => batch.purge(),
+        }
+    }
+}
+
+/// Whether `error` is Windows denying access, which the elevated broker may not get.
+pub fn needs_admin(error: &Error) -> bool {
+    matches!(error, Error::Io(e) if e.kind() == io::ErrorKind::PermissionDenied)
+}
+
 /// Per item: `Pending` is written before the move, `Copied` once a copy (across
 /// volumes, or a key's `.reg`) is verified and before the origin is removed, `Moved`
 /// after, `Restored` once back at its origin (STATE_MACHINES.md).
@@ -677,6 +735,33 @@ mod tests {
         for name in ["", ".", "..", r"..\x", "a/b", r"C:\Windows", "C:x"] {
             assert_eq!(batch_dir(root, name), None, "{name}");
         }
+    }
+
+    #[test]
+    fn actions_run_by_name() {
+        let dir = sandbox("by-name");
+        let root = dir.join("quarantine");
+        let mut batch = Batch::create(&root, "lot").unwrap();
+        batch.quarantine(&dir.join("app\\app.exe")).unwrap();
+        let missing = BatchAction::Restore.run(&root, "autre").unwrap_err();
+        assert_eq!(BatchFailure::from(missing), BatchFailure::Missing);
+        assert!(matches!(
+            BatchAction::Restore.run(&root, ".."),
+            Err(Error::Io(e)) if e.kind() == io::ErrorKind::NotFound
+        ));
+        BatchAction::Restore.run(&root, "lot").unwrap();
+        assert!(dir.join("app\\app.exe").exists());
+        BatchAction::Purge.run(&root, "lot").unwrap();
+        assert!(!root.join("lot").exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn only_denied_access_goes_to_the_broker() {
+        let denied = Error::Io(io::Error::from(io::ErrorKind::PermissionDenied));
+        assert!(needs_admin(&denied));
+        assert!(!needs_admin(&Error::Exists));
+        assert!(!needs_admin(&Error::Io(io::ErrorKind::NotFound.into())));
     }
 
     #[test]

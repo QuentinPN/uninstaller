@@ -174,6 +174,8 @@ export const fr = {
         "Un élément a changé depuis sa mise en quarantaine : il n'a pas été restauré.",
       corrupt: "Le manifeste de ce lot est endommagé : rien n'a été modifié.",
       purging: "Ce lot est en cours de purge.",
+      refused:
+        "Autorisation administrateur refusée : les éléments déjà remis en place le restent, rien d'autre n'a été modifié.",
       failed:
         "L'opération a échoué. Réessayez ; si cela persiste, redémarrez l'application.",
     },
