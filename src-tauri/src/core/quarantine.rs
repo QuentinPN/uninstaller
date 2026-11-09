@@ -28,8 +28,8 @@ pub enum Error {
     Altered,
     /// The manifest does not match its own hash.
     Corrupt,
-    /// A folder or link on another volume than the batch: only files are copied
-    /// across volumes so far.
+    /// A link, or a folder holding one, on another volume than the batch: a link is
+    /// only ever renamed, never recreated.
     OtherVolume,
     Io(io::Error),
 }
@@ -54,12 +54,14 @@ impl From<io::Error> for Error {
     }
 }
 
-/// Per item: `Pending` is written before the move, `Moved` after it, `Restored` once
-/// back at its origin (STATE_MACHINES.md).
+/// Per item: `Pending` is written before the move, `Copied` once a copy across
+/// volumes is verified and before the origin is removed, `Moved` after, `Restored`
+/// once back at its origin (STATE_MACHINES.md).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum State {
     Pending,
+    Copied,
     Moved,
     Restored,
 }
@@ -149,11 +151,24 @@ impl Batch {
             state: State::Pending,
         });
         self.save()?;
-        if let Err(error) = move_item(path, &self.stored(index), &self.items[index]) {
-            // Nothing moved: the item leaves the manifest again.
+        let stored = self.stored(index);
+        let moved = match fs::rename(path, &stored) {
+            Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+                copy_verified(path, &stored)
+            }
+            renamed => renamed.map_err(Error::from),
+        };
+        if let Err(error) = moved {
+            // Nothing left the origin: the item leaves the manifest again.
+            let _ = remove_tree(&stored);
             self.items.pop();
             self.save()?;
             return Err(error);
+        }
+        if fs::symlink_metadata(path).is_ok() {
+            // Copied across volumes: the origin goes only once the copy is recorded.
+            self.set_state(index, State::Copied)?;
+            remove_tree(path)?;
         }
         self.set_state(index, State::Moved)
     }
@@ -179,36 +194,57 @@ impl Batch {
             if let Some(parent) = item.origin.parent() {
                 fs::create_dir_all(parent)?;
             }
-            move_item(&stored, &item.origin, item)?;
+            match fs::rename(&stored, &item.origin) {
+                Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+                    if let Err(error) = copy_verified(&stored, &item.origin) {
+                        let _ = remove_tree(&item.origin);
+                        return Err(error);
+                    }
+                    remove_tree(&stored)?;
+                }
+                renamed => renamed?,
+            }
             self.set_state(index, State::Restored)?;
         }
         Ok(())
     }
 
-    /// Finishes what a crash interrupted. Only the last item can be `Pending` (one
-    /// move at a time). While its origin exists it never left: a partial copy in the
-    /// batch is dropped and so is the item. Once only the batch holds it, it is
-    /// `Moved`. Running it again changes nothing.
+    /// Finishes what a crash interrupted. Only the last item can be unsettled (one
+    /// move at a time). `Pending` with its origin still there never left: a partial
+    /// copy in the batch is dropped and so is the item; with only the batch holding
+    /// it, it is `Moved`. `Copied` has a verified copy: what remains of the origin
+    /// goes and it is `Moved`. Running it again changes nothing.
     pub fn resume(&mut self) -> Result<(), Error> {
-        let Some(index) = self.items.iter().position(|i| i.state == State::Pending) else {
+        let Some(index) = self
+            .items
+            .iter()
+            .position(|i| matches!(i.state, State::Pending | State::Copied))
+        else {
             return Ok(());
         };
         if index + 1 != self.items.len() {
             return Err(Error::Corrupt);
         }
         let stored = self.stored(index);
+        let origin = self.items[index].origin.clone();
         let in_batch = fs::symlink_metadata(&stored).is_ok();
-        if fs::symlink_metadata(&self.items[index].origin).is_ok() {
-            // Only a file is ever copied: a folder or link arrives by rename, whole.
-            if in_batch {
-                fs::remove_file(&stored)?;
+        let at_origin = fs::symlink_metadata(&origin).is_ok();
+        match (self.items[index].state, at_origin, in_batch) {
+            (State::Copied, _, true) => {
+                if at_origin {
+                    remove_tree(&origin)?;
+                }
+                self.set_state(index, State::Moved)
             }
-            self.items.pop();
-            self.save()
-        } else if in_batch {
-            self.set_state(index, State::Moved)
-        } else {
-            Err(Error::Corrupt)
+            (State::Pending, true, _) => {
+                if in_batch {
+                    remove_tree(&stored)?;
+                }
+                self.items.pop();
+                self.save()
+            }
+            (State::Pending, false, true) => self.set_state(index, State::Moved),
+            _ => Err(Error::Corrupt),
         }
     }
 
@@ -265,32 +301,36 @@ pub fn resume_all(root: &Path) -> usize {
         .count()
 }
 
-/// Renames `from` to `to`. Across volumes a file is copied (attributes and last
-/// write time kept), checked against the item's hash, and only then removed from
-/// `from`; on any failure the copy goes and `from` stays.
-fn move_item(from: &Path, to: &Path, item: &Item) -> Result<(), Error> {
-    match fs::rename(from, to) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() != io::ErrorKind::CrossesDevices => Err(error.into()),
-        Err(_) if item.kind != Kind::File => Err(Error::OtherVolume),
-        Err(_) => {
-            fs::copy(from, to)?;
-            let checked = file_hash(to).map_err(Error::from).and_then(|hash| {
-                if Some(&hash) == item.hash.as_ref() {
-                    Ok(())
-                } else {
-                    Err(Error::Altered)
-                }
-            });
-            match checked.and_then(|()| fs::remove_file(from).map_err(Error::from)) {
-                Ok(()) => Ok(()),
-                Err(error) => {
-                    // Our own copy, never the user's file.
-                    let _ = fs::remove_file(to);
-                    Err(error)
-                }
-            }
+/// Copies a file or a folder tree across volumes (attributes and last write time
+/// kept), each file checked by SHA-256 against its source. Leaves `from` alone; the
+/// caller removes a partial `to`.
+fn copy_verified(from: &Path, to: &Path) -> Result<(), Error> {
+    let meta = fs::symlink_metadata(from)?;
+    if meta.is_symlink() {
+        return Err(Error::OtherVolume);
+    }
+    if meta.is_dir() {
+        fs::create_dir(to)?;
+        for entry in fs::read_dir(from)? {
+            let entry = entry?;
+            copy_verified(&entry.path(), &to.join(entry.file_name()))?;
         }
+        return Ok(());
+    }
+    fs::copy(from, to)?;
+    if file_hash(from)? != file_hash(to)? {
+        return Err(Error::Altered);
+    }
+    Ok(())
+}
+
+/// Removes a file, a link (not its target) or a folder tree: the origin once its
+/// copy is verified, or a partial copy of ours.
+fn remove_tree(path: &Path) -> io::Result<()> {
+    if fs::symlink_metadata(path)?.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
     }
 }
 
@@ -436,28 +476,62 @@ mod tests {
     }
 
     #[test]
-    fn copies_files_across_volumes_and_refuses_folders() {
+    fn copies_files_and_folders_across_volumes_but_no_links() {
         let dir = sandbox("volumes");
         let root = other_volume_root("volumes");
         let mut batch = Batch::create(&root, "lot").unwrap();
         let exe = dir.join("app\\app.exe");
-        batch.quarantine(&exe).unwrap();
-        assert!(!exe.exists());
-        assert_eq!(fs::read(batch.stored(0)).unwrap(), b"binary");
-
         let data = dir.join("app\\data");
-        let crosses = fs::rename(&data, root.join("probe")).is_err();
-        if !crosses {
-            fs::rename(root.join("probe"), &data).unwrap();
-        } else {
-            assert!(matches!(batch.quarantine(&data), Err(Error::OtherVolume)));
-            assert!(data.join("settings.ini").exists());
-            assert_eq!(batch.items().len(), 1);
-        }
-
+        batch.quarantine(&exe).unwrap();
+        batch.quarantine(&data).unwrap();
+        assert!(!exe.exists() && !data.exists());
+        assert_eq!(fs::read(batch.stored(0)).unwrap(), b"binary");
+        assert_eq!(
+            fs::read(batch.stored(1).join("settings.ini")).unwrap(),
+            b"[x]\ny=1"
+        );
         batch.restore().unwrap();
         assert_eq!(fs::read(&exe).unwrap(), b"binary");
+        assert_eq!(fs::read(data.join("settings.ini")).unwrap(), b"[x]\ny=1");
+        assert!(!batch.stored(1).exists());
+
+        let crosses = fs::rename(&exe, root.join("probe")).is_err();
+        if crosses {
+            junction(&dir.join("app\\link"), &data);
+            assert!(matches!(
+                batch.quarantine(&dir.join("app")),
+                Err(Error::OtherVolume)
+            ));
+            assert!(data.join("settings.ini").exists());
+            assert!(!batch.stored(2).exists());
+            assert_eq!(batch.items().len(), 2);
+            fs::remove_dir(dir.join("app\\link")).unwrap();
+        } else {
+            fs::rename(root.join("probe"), &exe).unwrap();
+        }
         fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn resume_finishes_a_verified_copy() {
+        let dir = sandbox("copied");
+        let data = dir.join("app\\data");
+        let mut batch = Batch::create(&dir.join("quarantine"), "lot").unwrap();
+        batch.items.push(Item {
+            origin: data.clone(),
+            kind: Kind::Folder,
+            hash: None,
+            state: State::Copied,
+        });
+        batch.save().unwrap();
+        copy_verified(&data, &batch.stored(0)).unwrap();
+        assert_eq!(resume_all(&dir.join("quarantine")), 1);
+        assert!(!data.exists());
+        let mut batch = Batch::open(&dir.join("quarantine\\lot")).unwrap();
+        assert_eq!(batch.items()[0].state, State::Moved);
+        batch.restore().unwrap();
+        assert!(data.join("settings.ini").exists());
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -493,17 +567,21 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    fn junction(link: &Path, target: &Path) {
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .unwrap();
+        assert!(made.status.success());
+    }
+
     #[test]
     fn moves_a_junction_without_following_it() {
         let dir = sandbox("junction");
         let link = dir.join("app\\link");
-        let made = std::process::Command::new("cmd")
-            .args(["/C", "mklink", "/J"])
-            .arg(&link)
-            .arg(dir.join("app\\data"))
-            .output()
-            .unwrap();
-        assert!(made.status.success());
+        junction(&link, &dir.join("app\\data"));
         let mut batch = Batch::create(&dir.join("quarantine"), "lot").unwrap();
         batch.quarantine(&link).unwrap();
         assert!(!link.exists());

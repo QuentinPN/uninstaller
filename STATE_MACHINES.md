@@ -46,17 +46,20 @@ Tailles calculées (tranche 5) : à chaque passage en Loaded, `computeSizes` par
 |------|-----------|--------------|-------|
 | — | `quarantine(chemin)`, chemin protégé | — | `Error::Protected`, manifeste inchangé |
 | — | `quarantine(chemin)` | Pending | ligne écrite dans le manifeste **avant** le déplacement |
-| Pending | déplacement réussi | Moved | manifeste réécrit |
-| Pending | déplacement échoué (dossier ou lien sur un autre volume : `OtherVolume` ; copie d'un fichier dont l'empreinte diffère : `Altered`) | — | copie partielle retirée du lot, ligne retirée, origine intacte |
+| Pending | renommage réussi (même volume) | Moved | manifeste réécrit |
+| Pending | autre volume : fichier ou arborescence copiés, chaque fichier vérifié par SHA-256 | Copied | manifeste réécrit, **puis** origine retirée |
+| Copied | origine retirée | Moved | manifeste réécrit |
+| Pending | échec (lien, ou dossier contenant un lien, sur un autre volume : `OtherVolume` ; empreinte différente : `Altered` ; E/S) | — | copie partielle retirée du lot, ligne retirée, origine intacte |
 | Pending | démarrage (`resume_all`), origine présente | — | copie partielle éventuelle retirée du lot, ligne retirée |
 | Pending | démarrage, origine absente, élément dans le lot | Moved | manifeste réécrit |
-| Pending | démarrage, origine et lot vides | Pending | `Error::Corrupt`, lot laissé tel quel |
-| Moved | `restore()`, origine libre, contenu intact | Restored | élément remis en place (même volume : renommage ; sinon fichier copié, vérifié, puis retiré du lot), manifeste réécrit |
+| Copied | démarrage, élément dans le lot | Moved | reste de l'origine retiré, manifeste réécrit |
+| Pending / Copied | démarrage, élément absent du lot (et origine absente pour Pending) | inchangé | `Error::Corrupt`, lot laissé tel quel |
+| Moved | `restore()`, origine libre, contenu intact | Restored | élément remis en place (même volume : renommage ; sinon copié, vérifié, puis retiré du lot ; à l'échec la copie partielle à l'origine est retirée), manifeste réécrit |
 | Moved | `restore()`, origine occupée | Moved | `Error::Exists`, arrêt, rien écrasé |
 | Moved | `restore()`, empreinte différente | Moved | `Error::Altered`, arrêt |
 | Restored | `restore()` | Restored | ignoré |
 
-Le manifeste est réécrit par fichier temporaire + renommage ; une empreinte qui ne correspond plus donne `Error::Corrupt` à l'ouverture. Seul le dernier élément peut être `Pending` ; sinon `Error::Corrupt` et le lot reste tel quel. La reprise tourne sur un thread au lancement (`run()`), sur `%LOCALAPPDATA%\Uninstaller\quarantine`, et ne fait rien si le dossier n'existe pas. Pas encore faits : états du lot (`Active → Restoring → Restored` / `Purging → Purged`).
+Le manifeste est réécrit par fichier temporaire + renommage ; une empreinte qui ne correspond plus donne `Error::Corrupt` à l'ouverture. Seul le dernier élément peut être `Pending` ou `Copied` ; sinon `Error::Corrupt` et le lot reste tel quel. La reprise tourne sur un thread au lancement (`run()`), sur `%LOCALAPPDATA%\Uninstaller\quarantine`, et ne fait rien si le dossier n'existe pas. Limite connue : un plantage pendant une restauration d'un autre volume, après la copie vérifiée, laisse l'élément `Moved` avec l'origine complète ; la restauration suivante répond `Exists`, sans perte. Pas encore faits : états du lot (`Active → Restoring → Restored` / `Purging → Purged`).
 
 ### 2. Scan des restes · 4. Session de suivi d'installation · 5. Mode Chasseur
 
