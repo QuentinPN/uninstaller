@@ -37,6 +37,7 @@ function program(name: string, extra: Partial<Program> = {}): Program {
     msi: false,
     registryKey: `HKEY_LOCAL_MACHINE\\${name}`,
     scope: "machine64",
+    profile: null,
     kind: "app",
     ...extra,
   };

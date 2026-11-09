@@ -20,10 +20,14 @@ const SHARED_FOLDERS: [&str; 11] = [
 ];
 
 /// True for a drive root, `%SystemRoot%` or anything under it, a shared folder, the
-/// folder holding the user profiles, or a path that is not absolute.
+/// folder holding the user profiles or any account's profile, or a path that is not
+/// absolute or goes through `..` (it could climb out of anything checked here).
 pub fn is_protected(path: &Path) -> bool {
     let path = normalize(path);
-    if !path.is_absolute() || path.parent().is_none() {
+    if !path.is_absolute()
+        || path.parent().is_none()
+        || path.components().any(|c| c == Component::ParentDir)
+    {
         return true;
     }
     let var = |name: &str| std::env::var_os(name).map(|v| normalize(Path::new(&v)));
@@ -31,6 +35,12 @@ pub fn is_protected(path: &Path) -> bool {
         return true;
     }
     let profiles = var("USERPROFILE").and_then(|p| p.parent().map(Path::to_path_buf));
+    if profiles
+        .as_deref()
+        .is_some_and(|p| path.parent() == Some(p))
+    {
+        return true;
+    }
     SHARED_FOLDERS
         .iter()
         .filter_map(|name| var(name))
@@ -70,6 +80,12 @@ mod tests {
             format!(r"{}\Programs", env("LOCALAPPDATA")),
             env("APPDATA").replace('\\', "/"),
             r"C:\Users".to_owned(),
+            format!(r"{}\..\Autre", env("USERPROFILE")),
+            Path::new(&env("USERPROFILE"))
+                .with_file_name("Autre")
+                .to_string_lossy()
+                .into_owned(),
+            format!(r"{}\..\..\Windows", env("ProgramFiles")),
         ] {
             assert!(is_protected(Path::new(&path)), "{path}");
         }

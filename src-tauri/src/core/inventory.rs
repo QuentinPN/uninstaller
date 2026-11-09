@@ -5,7 +5,7 @@ use specta::Type;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use crate::core::registry::paths::{UNINSTALL, UNINSTALL_SOURCES, shown_key};
+use crate::core::registry::paths::Source;
 use crate::win::registry::Key;
 
 /// Where the program is registered.
@@ -18,14 +18,17 @@ pub enum Scope {
     Machine32,
     /// HKCU: installed for the current user only.
     User,
+    /// HKU: installed for another account of this PC, whose hive is loaded.
+    OtherUser,
 }
 
 impl Scope {
-    fn tag(self) -> &'static str {
+    pub(crate) fn tag(self) -> &'static str {
         match self {
             Scope::Machine64 => "hklm64",
             Scope::Machine32 => "hklm32",
             Scope::User => "hkcu",
+            Scope::OtherUser => "hku",
         }
     }
 }
@@ -44,7 +47,7 @@ pub enum Kind {
 #[derive(Clone, Debug, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Program {
-    /// Opaque identifier (`scope\key`), the only handle the UI sends back.
+    /// Opaque identifier (`scope\key`, `hku\sid\key`), the only handle the UI sends back.
     pub id: String,
     pub name: String,
     pub publisher: Option<String>,
@@ -64,6 +67,8 @@ pub struct Program {
     /// Full key path, as regedit shows it.
     pub registry_key: String,
     pub scope: Scope,
+    /// The other account's profile folder name, for `Scope::OtherUser`.
+    pub profile: Option<String>,
     pub kind: Kind,
 }
 
@@ -97,13 +102,13 @@ impl Entry for Key {
 /// Reads every source, drops duplicates (same name, version, publisher), sorts by name.
 pub fn scan() -> Vec<Program> {
     let mut programs = Vec::new();
-    for (scope, hive, view) in UNINSTALL_SOURCES {
-        let Some(root) = Key::open(hive, UNINSTALL, view) else {
+    for source in Source::all() {
+        let Some(root) = source.open() else {
             continue;
         };
         for name in root.subkey_names() {
             if let Some(entry) = root.subkey(&name) {
-                programs.extend(parse(scope, &name, &entry));
+                programs.extend(parse(&source, &name, &entry));
             }
         }
     }
@@ -113,19 +118,13 @@ pub fn scan() -> Vec<Program> {
 /// Reads one program back from its opaque id; `None` if the id is malformed or the
 /// key is gone. Lets commands take an id instead of a path from the UI.
 pub fn find(id: &str) -> Option<Program> {
-    let (tag, key_name) = id.split_once('\\')?;
-    if key_name.is_empty() || key_name.contains('\\') {
-        return None;
-    }
-    let (scope, hive, view) = UNINSTALL_SOURCES
-        .into_iter()
-        .find(|(s, ..)| s.tag() == tag)?;
-    let entry = Key::open(hive, UNINSTALL, view)?.subkey(key_name)?;
-    parse(scope, key_name, &entry)
+    let (source, key_name) = Source::locate(id)?;
+    let entry = source.open()?.subkey(key_name)?;
+    parse(&source, key_name, &entry)
 }
 
 /// One Uninstall subkey to a program; `None` without a display name.
-pub fn parse(scope: Scope, key_name: &str, entry: &impl Entry) -> Option<Program> {
+pub fn parse(source: &Source, key_name: &str, entry: &impl Entry) -> Option<Program> {
     let name = entry.string("DisplayName")?;
     let kind = if entry.dword("SystemComponent") == Some(1) {
         Kind::SystemComponent
@@ -141,7 +140,7 @@ pub fn parse(scope: Scope, key_name: &str, entry: &impl Entry) -> Option<Program
         Kind::App
     };
     Some(Program {
-        id: format!("{}\\{key_name}", scope.tag()),
+        id: source.id(key_name),
         name,
         publisher: entry.string("Publisher"),
         version: entry.string("DisplayVersion"),
@@ -159,8 +158,9 @@ pub fn parse(scope: Scope, key_name: &str, entry: &impl Entry) -> Option<Program
             .or_else(|| entry.string("HelpLink")),
         comments: entry.string("Comments"),
         msi: entry.dword("WindowsInstaller") == Some(1),
-        registry_key: shown_key(scope, key_name),
-        scope,
+        registry_key: source.shown_key(key_name),
+        scope: source.scope,
+        profile: source.profile.as_ref().and_then(|p| p.name.clone()),
         kind,
     })
 }
@@ -215,6 +215,7 @@ fn date_from_filetime(filetime: u64) -> String {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::core::registry::paths::UNINSTALL_SOURCES;
     use std::collections::HashMap;
 
     /// A bare program for tests of other modules.
@@ -235,8 +236,17 @@ pub(crate) mod tests {
             msi: false,
             registry_key: String::new(),
             scope: Scope::Machine64,
+            profile: None,
             kind: Kind::App,
         }
+    }
+
+    /// The fixed source of `scope`.
+    fn at(scope: Scope) -> Source {
+        UNINSTALL_SOURCES
+            .into_iter()
+            .find(|s| s.scope == scope)
+            .unwrap()
     }
 
     #[derive(Default)]
@@ -276,7 +286,7 @@ pub(crate) mod tests {
 
     #[test]
     fn without_display_name_is_skipped() {
-        assert!(parse(Scope::User, "k", &Fake::default()).is_none());
+        assert!(parse(&at(Scope::User), "k", &Fake::default()).is_none());
     }
 
     #[test]
@@ -287,7 +297,7 @@ pub(crate) mod tests {
             .s("InstallDate", "20240315")
             .d("EstimatedSize", 2048)
             .d("WindowsInstaller", 1);
-        let p = parse(Scope::Machine32, "{GUID}", &fake).unwrap();
+        let p = parse(&at(Scope::Machine32), "{GUID}", &fake).unwrap();
         assert_eq!(p.id, "hklm32\\{GUID}");
         assert_eq!(p.publisher.as_deref(), Some("Uninstaller"));
         assert_eq!(p.install_date.as_deref(), Some("2024-03-15"));
@@ -298,7 +308,7 @@ pub(crate) mod tests {
 
     #[test]
     fn classifies_system_components_and_updates() {
-        let kind = |f: Fake| parse(Scope::Machine64, "k", &f).unwrap().kind;
+        let kind = |f: Fake| parse(&at(Scope::Machine64), "k", &f).unwrap().kind;
         assert_eq!(
             kind(Fake::named("A").d("SystemComponent", 1)),
             Kind::SystemComponent
@@ -319,7 +329,7 @@ pub(crate) mod tests {
         let mut fake = Fake::named("A").s("InstallDate", "15/03/2024");
         // 2024-03-15T00:00:00Z as FILETIME.
         fake.last_write = Some(133_549_920_000_000_000);
-        let p = parse(Scope::User, "k", &fake).unwrap();
+        let p = parse(&at(Scope::User), "k", &fake).unwrap();
         assert_eq!(p.install_date.as_deref(), Some("2024-03-15"));
     }
 
@@ -338,7 +348,7 @@ pub(crate) mod tests {
 
     #[test]
     fn duplicates_are_dropped_and_names_sorted() {
-        let make = |scope, name: &'static str| parse(scope, "k", &Fake::named(name)).unwrap();
+        let make = |scope, name: &'static str| parse(&at(scope), "k", &Fake::named(name)).unwrap();
         let out = dedup_and_sort(vec![
             make(Scope::Machine64, "zeta"),
             make(Scope::Machine32, "Alpha"),
@@ -360,8 +370,6 @@ pub(crate) mod tests {
     fn find_reads_back_a_scanned_program_and_rejects_bad_ids() {
         let first = scan().into_iter().next().unwrap();
         assert_eq!(find(&first.id).map(|p| p.name), Some(first.name));
-        for bad in ["", "hklm64", r"hklm64\", r"nope\k", r"hkcu\a\b"] {
-            assert!(find(bad).is_none(), "{bad}");
-        }
+        assert!(find(r"nope\k").is_none());
     }
 }

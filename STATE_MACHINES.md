@@ -34,7 +34,7 @@ Invariants : une seule tâche active par programme ; rien n'est supprimé avant 
 
 Panneau de détails (tranche 2) : fermé → ouvert par Espace ou double-clic sur la ligne sélectionnée ; ouvert, il suit la sélection ; Échap ou ✕ le ferme et rend le focus à la liste. Si le programme sélectionné disparaît (rechargement), le panneau se ferme de lui-même.
 
-Une source de registre illisible (clé absente, accès refusé) est ignorée côté Rust sans faire échouer l'ensemble. Filtre de type (tranche 6) : `shown` (vide au départ) ; chaque bascule ajoute ou retire « Composants système » ou « Mises à jour » ; les applications restent toujours visibles. Pas de persistance : chaque lancement repart du filtre par défaut.
+Une source de registre illisible (clé absente, accès refusé) est ignorée côté Rust sans faire échouer l'ensemble. Filtre de type (tranche 6) : `shown` (vide au départ) ; chaque bascule ajoute ou retire « Composants système » ou « Mises à jour » ; les applications restent toujours visibles. Pas de persistance : chaque lancement repart du filtre par défaut. Autres comptes (tranche 7) : lus à chaque inventaire parmi les ruches chargées sous HKU à cet instant ; un compte qui se déconnecte disparaît au rechargement suivant, et un identifiant `hku\…` dont la ruche n'est plus chargée se lit comme un programme disparu.
 
 Icônes (tranche 4) : chaque ligne demande `icon://<id>` à l'affichage ; 404 ou image illisible → glyphe, retenu pour cette URL.
 

@@ -45,7 +45,7 @@ export type ProgramSize = {
 };
 
 export type Program_Deserialize = {
-	/**  Opaque identifier (`scope\key`), the only handle the UI sends back. */
+	/**  Opaque identifier (`scope\key`, `hku\sid\key`), the only handle the UI sends back. */
 	id: string,
 	name: string,
 	publisher?: string | null,
@@ -65,11 +65,13 @@ export type Program_Deserialize = {
 	/**  Full key path, as regedit shows it. */
 	registryKey: string,
 	scope: Scope,
+	/**  The other account's profile folder name, for `Scope::OtherUser`. */
+	profile?: string | null,
 	kind: Kind,
 };
 
 export type Program_Serialize = {
-	/**  Opaque identifier (`scope\key`), the only handle the UI sends back. */
+	/**  Opaque identifier (`scope\key`, `hku\sid\key`), the only handle the UI sends back. */
 	id: string,
 	name: string,
 	publisher: string | null,
@@ -89,6 +91,8 @@ export type Program_Serialize = {
 	/**  Full key path, as regedit shows it. */
 	registryKey: string,
 	scope: Scope,
+	/**  The other account's profile folder name, for `Scope::OtherUser`. */
+	profile: string | null,
 	kind: Kind,
 };
 
@@ -99,5 +103,7 @@ export type Scope =
 /**  HKLM, 32-bit view (WOW6432Node). */
 "machine32" | 
 /**  HKCU: installed for the current user only. */
-"user";
+"user" | 
+/**  HKU: installed for another account of this PC, whose hive is loaded. */
+"otherUser";
 

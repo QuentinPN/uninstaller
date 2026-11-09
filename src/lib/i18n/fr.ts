@@ -32,11 +32,17 @@ export const fr = {
     /** Toggles for the kinds hidden by default, and the tag on their rows. */
     kinds: { systemComponent: "Composants système", update: "Mises à jour" },
     kind: { systemComponent: "Composant système", update: "Mise à jour" },
-    scope: { machine64: "64 bits", machine32: "32 bits", user: "Utilisateur" },
+    scope: {
+      machine64: "64 bits",
+      machine32: "32 bits",
+      user: "Utilisateur",
+      otherUser: "Autre compte",
+    },
     scopeHint: {
       machine64: "Installé pour tous les utilisateurs, 64 bits",
       machine32: "Installé pour tous les utilisateurs, 32 bits",
       user: "Installé pour votre compte seulement",
+      otherUser: "Installé pour un autre compte de ce PC",
     },
     noResults: {
       title: "Aucun programme trouvé",
@@ -55,6 +61,7 @@ export const fr = {
       size: "Taille déclarée",
       installed: "Installé le",
       scope: "Installation",
+      account: "Compte",
       installer: "Installeur",
       msi: "Windows Installer",
       comments: "Commentaire",

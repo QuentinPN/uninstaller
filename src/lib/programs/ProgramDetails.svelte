@@ -41,6 +41,7 @@ const facts = $derived(
       value: program.installDate ? formatDate(program.installDate) : null,
     },
     { label: t.scope, value: fr.programs.scopeHint[program.scope] },
+    { label: t.account, value: program.profile },
     { label: t.installer, value: program.msi ? t.msi : null },
     { label: t.comments, value: program.comments },
   ]).filter((f) => f.value),

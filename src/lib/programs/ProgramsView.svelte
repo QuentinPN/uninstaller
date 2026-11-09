@@ -188,7 +188,7 @@ onMount(load);
         </span>
         <span class="date num">{p.installDate ? formatDate(p.installDate) : ""}</span>
         <span class="badge" title={fr.programs.scopeHint[p.scope]}>
-          {fr.programs.scope[p.scope]}
+          {p.profile ?? fr.programs.scope[p.scope]}
         </span>
       </div>
     {/snippet}

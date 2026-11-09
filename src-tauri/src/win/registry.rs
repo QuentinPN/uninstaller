@@ -2,9 +2,10 @@
 
 use windows::Win32::Foundation::{ERROR_SUCCESS, FILETIME};
 use windows::Win32::System::Registry::{
-    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY,
-    REG_ROUTINE_FLAGS, REG_SAM_FLAGS, RRF_NOEXPAND, RRF_RT_REG_DWORD, RRF_RT_REG_EXPAND_SZ,
-    RRF_RT_REG_SZ, RegCloseKey, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW, RegQueryInfoKeyW,
+    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, HKEY_USERS, KEY_READ, KEY_WOW64_32KEY,
+    KEY_WOW64_64KEY, REG_ROUTINE_FLAGS, REG_SAM_FLAGS, RRF_NOEXPAND, RRF_RT_REG_DWORD,
+    RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ, RegCloseKey, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW,
+    RegQueryInfoKeyW,
 };
 use windows::core::{HSTRING, PWSTR};
 
@@ -12,6 +13,19 @@ use windows::core::{HSTRING, PWSTR};
 pub enum Hive {
     LocalMachine,
     CurrentUser,
+    /// HKEY_USERS: one subkey per loaded account hive, named by its SID.
+    Users,
+}
+
+impl Hive {
+    /// The root as regedit shows it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Hive::LocalMachine => "HKEY_LOCAL_MACHINE",
+            Hive::CurrentUser => "HKEY_CURRENT_USER",
+            Hive::Users => "HKEY_USERS",
+        }
+    }
 }
 
 /// Registry view: explicit, so a 32-bit or 64-bit build reads the same keys.
@@ -28,11 +42,13 @@ pub struct Key {
 }
 
 impl Key {
-    /// Opens `path` under `hive` for reading; `None` if it does not exist or is denied.
+    /// Opens `path` under `hive` for reading (`""` opens the hive itself); `None` if it
+    /// does not exist or is denied.
     pub fn open(hive: Hive, path: &str, view: View) -> Option<Self> {
         let root = match hive {
             Hive::LocalMachine => HKEY_LOCAL_MACHINE,
             Hive::CurrentUser => HKEY_CURRENT_USER,
+            Hive::Users => HKEY_USERS,
         };
         let access = KEY_READ
             | match view {
