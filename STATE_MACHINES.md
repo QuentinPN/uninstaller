@@ -47,10 +47,11 @@ Tailles calculées (tranche 5) : à chaque passage en Loaded, `computeSizes` par
 | — | `quarantine(chemin)`, chemin protégé | — | `Error::Protected`, manifeste inchangé |
 | — | `quarantine(chemin)` | Pending | ligne écrite dans le manifeste **avant** le déplacement |
 | Pending | déplacement réussi | Moved | manifeste réécrit |
-| Pending | déplacement échoué (autre volume : `OtherVolume`) | — | ligne retirée, manifeste réécrit |
-| Pending | démarrage (`resume_all`), élément présent dans le lot | Moved | manifeste réécrit |
-| Pending | démarrage, élément absent du lot | — | ligne retirée (le fichier n'a pas quitté son origine) |
-| Moved | `restore()`, origine libre, contenu intact | Restored | élément remis en place, manifeste réécrit |
+| Pending | déplacement échoué (dossier ou lien sur un autre volume : `OtherVolume` ; copie d'un fichier dont l'empreinte diffère : `Altered`) | — | copie partielle retirée du lot, ligne retirée, origine intacte |
+| Pending | démarrage (`resume_all`), origine présente | — | copie partielle éventuelle retirée du lot, ligne retirée |
+| Pending | démarrage, origine absente, élément dans le lot | Moved | manifeste réécrit |
+| Pending | démarrage, origine et lot vides | Pending | `Error::Corrupt`, lot laissé tel quel |
+| Moved | `restore()`, origine libre, contenu intact | Restored | élément remis en place (même volume : renommage ; sinon fichier copié, vérifié, puis retiré du lot), manifeste réécrit |
 | Moved | `restore()`, origine occupée | Moved | `Error::Exists`, arrêt, rien écrasé |
 | Moved | `restore()`, empreinte différente | Moved | `Error::Altered`, arrêt |
 | Restored | `restore()` | Restored | ignoré |

@@ -28,7 +28,8 @@ pub enum Error {
     Altered,
     /// The manifest does not match its own hash.
     Corrupt,
-    /// Not on the batch's volume: copy then verify comes in a later slice.
+    /// A folder or link on another volume than the batch: only files are copied
+    /// across volumes so far.
     OtherVolume,
     Io(io::Error),
 }
@@ -148,15 +149,11 @@ impl Batch {
             state: State::Pending,
         });
         self.save()?;
-        if let Err(error) = fs::rename(path, self.stored(index)) {
+        if let Err(error) = move_item(path, &self.stored(index), &self.items[index]) {
             // Nothing moved: the item leaves the manifest again.
             self.items.pop();
             self.save()?;
-            return Err(if error.kind() == io::ErrorKind::CrossesDevices {
-                Error::OtherVolume
-            } else {
-                Error::Io(error)
-            });
+            return Err(error);
         }
         self.set_state(index, State::Moved)
     }
@@ -182,15 +179,16 @@ impl Batch {
             if let Some(parent) = item.origin.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::rename(&stored, &item.origin)?;
+            move_item(&stored, &item.origin, item)?;
             self.set_state(index, State::Restored)?;
         }
         Ok(())
     }
 
     /// Finishes what a crash interrupted. Only the last item can be `Pending` (one
-    /// move at a time): if it reached the batch it becomes `Moved`, otherwise it leaves
-    /// the manifest. Running it again changes nothing.
+    /// move at a time). While its origin exists it never left: a partial copy in the
+    /// batch is dropped and so is the item. Once only the batch holds it, it is
+    /// `Moved`. Running it again changes nothing.
     pub fn resume(&mut self) -> Result<(), Error> {
         let Some(index) = self.items.iter().position(|i| i.state == State::Pending) else {
             return Ok(());
@@ -198,11 +196,19 @@ impl Batch {
         if index + 1 != self.items.len() {
             return Err(Error::Corrupt);
         }
-        if fs::symlink_metadata(self.stored(index)).is_ok() {
-            self.set_state(index, State::Moved)
-        } else {
+        let stored = self.stored(index);
+        let in_batch = fs::symlink_metadata(&stored).is_ok();
+        if fs::symlink_metadata(&self.items[index].origin).is_ok() {
+            // Only a file is ever copied: a folder or link arrives by rename, whole.
+            if in_batch {
+                fs::remove_file(&stored)?;
+            }
             self.items.pop();
             self.save()
+        } else if in_batch {
+            self.set_state(index, State::Moved)
+        } else {
+            Err(Error::Corrupt)
         }
     }
 
@@ -257,6 +263,35 @@ pub fn resume_all(root: &Path) -> usize {
                 .is_ok()
         })
         .count()
+}
+
+/// Renames `from` to `to`. Across volumes a file is copied (attributes and last
+/// write time kept), checked against the item's hash, and only then removed from
+/// `from`; on any failure the copy goes and `from` stays.
+fn move_item(from: &Path, to: &Path, item: &Item) -> Result<(), Error> {
+    match fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() != io::ErrorKind::CrossesDevices => Err(error.into()),
+        Err(_) if item.kind != Kind::File => Err(Error::OtherVolume),
+        Err(_) => {
+            fs::copy(from, to)?;
+            let checked = file_hash(to).map_err(Error::from).and_then(|hash| {
+                if Some(&hash) == item.hash.as_ref() {
+                    Ok(())
+                } else {
+                    Err(Error::Altered)
+                }
+            });
+            match checked.and_then(|()| fs::remove_file(from).map_err(Error::from)) {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    // Our own copy, never the user's file.
+                    let _ = fs::remove_file(to);
+                    Err(error)
+                }
+            }
+        }
+    }
 }
 
 fn items_hash(items: &[Item]) -> Result<String, Error> {
@@ -386,6 +421,60 @@ mod tests {
         batch.restore().unwrap();
         assert_eq!(fs::read(dir.join("app\\app.exe")).unwrap(), b"binary");
         assert_eq!(resume_all(&dir.join("absent")), 0);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A batch root on the repository's volume (D: here), while `sandbox` is on
+    /// %TEMP%'s (C:). On a machine with one volume the test still passes, by rename.
+    fn other_volume_root(name: &str) -> PathBuf {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("uninstaller-tests")
+            .join(format!("{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        root
+    }
+
+    #[test]
+    fn copies_files_across_volumes_and_refuses_folders() {
+        let dir = sandbox("volumes");
+        let root = other_volume_root("volumes");
+        let mut batch = Batch::create(&root, "lot").unwrap();
+        let exe = dir.join("app\\app.exe");
+        batch.quarantine(&exe).unwrap();
+        assert!(!exe.exists());
+        assert_eq!(fs::read(batch.stored(0)).unwrap(), b"binary");
+
+        let data = dir.join("app\\data");
+        let crosses = fs::rename(&data, root.join("probe")).is_err();
+        if !crosses {
+            fs::rename(root.join("probe"), &data).unwrap();
+        } else {
+            assert!(matches!(batch.quarantine(&data), Err(Error::OtherVolume)));
+            assert!(data.join("settings.ini").exists());
+            assert_eq!(batch.items().len(), 1);
+        }
+
+        batch.restore().unwrap();
+        assert_eq!(fs::read(&exe).unwrap(), b"binary");
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn resume_drops_a_partial_copy_while_the_origin_exists() {
+        let dir = sandbox("partial");
+        let batch = interrupted(&dir, false);
+        fs::write(batch.stored(0), b"bin").unwrap();
+        assert_eq!(resume_all(&dir.join("quarantine")), 1);
+        assert!(
+            Batch::open(&dir.join("quarantine\\lot"))
+                .unwrap()
+                .items()
+                .is_empty()
+        );
+        assert!(!batch.stored(0).exists());
+        assert_eq!(fs::read(dir.join("app\\app.exe")).unwrap(), b"binary");
         fs::remove_dir_all(dir).unwrap();
     }
 
