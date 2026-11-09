@@ -11,6 +11,8 @@ import VirtualList from "../ui/VirtualList.svelte";
 import AppIcon from "./AppIcon.svelte";
 import ProgramDetails from "./ProgramDetails.svelte";
 import {
+  type GroupKey,
+  groupLabel,
   OPTIONAL_KINDS,
   type OptionalKind,
   type SortKey,
@@ -20,6 +22,7 @@ import {
 } from "./view";
 
 const SORT_KEYS: SortKey[] = ["name", "size", "date"];
+const GROUP_KEYS: GroupKey[] = ["none", "publisher", "date", "size"];
 /** Placeholder rows while the inventory loads. */
 const SKELETON_ROWS = 8;
 
@@ -27,6 +30,7 @@ let programs = $state<Program[] | null>(null);
 let failed = $state(false);
 let query = $state("");
 let sort = $state<SortKey>("name");
+let group = $state<GroupKey>("none");
 let selection = $state<Selection>(EMPTY_SELECTION);
 /** Sizes measured on disk, streamed in after the list is shown. */
 const sizes = new SvelteMap<string, number>();
@@ -54,7 +58,9 @@ const chosen = $derived(
 );
 
 const visible = $derived(
-  programs ? visiblePrograms(programs, { query, sort, sizes, shown }) : [],
+  programs
+    ? visiblePrograms(programs, { query, sort, group, sizes, shown })
+    : [],
 );
 
 function load() {
@@ -135,6 +141,14 @@ onMount(load);
       {/each}
     </select>
   </label>
+  <label class="sort">
+    {fr.programs.groupBy}
+    <select bind:value={group}>
+      {#each GROUP_KEYS as key (key)}
+        <option value={key}>{fr.programs.group[key]}</option>
+      {/each}
+    </select>
+  </label>
   <div class="kinds" role="group" aria-label={fr.programs.show}>
     {#each OPTIONAL_KINDS as kind (kind)}
       <button class="kind-toggle" aria-pressed={shown.has(kind)} onclick={() => toggle(kind)}>
@@ -168,6 +182,7 @@ onMount(load);
     key={(p) => p.id}
     label={fr.programs.list}
     onopen={() => (detailsOpen = true)}
+    group={(p) => groupLabel(p, group, sizes)}
   >
     {#snippet row(p: Program)}
       {@const size = sizeKib(p, sizes)}

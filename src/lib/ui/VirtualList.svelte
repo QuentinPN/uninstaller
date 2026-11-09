@@ -17,7 +17,12 @@ interface Props {
   selection?: Selection;
   /** Space or double-click on a row. */
   onopen?: (item: T) => void;
+  /** Heading of the item's group: a heading row starts each run of equal headings. */
+  group?: (item: T) => string | null;
 }
+
+/** A rendered line: a group heading (with its item count) or an item. */
+type Slot = { heading: string; count: number } | { index: number };
 
 let {
   items,
@@ -26,6 +31,7 @@ let {
   label,
   selection = $bindable(EMPTY_SELECTION),
   onopen,
+  group,
 }: Props = $props();
 
 /** Rows rendered above and below the viewport, so fast scrolling shows no gap. */
@@ -44,13 +50,31 @@ onMount(() => {
   );
 });
 
+/** Lines in display order, and the line of each item (headings shift items down). */
+const layout = $derived.by(() => {
+  const slots: Slot[] = [];
+  const lineOf: number[] = [];
+  let current: { heading: string; count: number } | null = null;
+  items.forEach((item, index) => {
+    const heading = group?.(item) ?? null;
+    if (heading !== null && heading !== current?.heading) {
+      current = { heading, count: 0 };
+      slots.push(current);
+    }
+    if (current && heading !== null) current.count++;
+    lineOf.push(slots.length);
+    slots.push({ index });
+  });
+  return { slots, lineOf };
+});
+
 const start = $derived(
   rowHeight ? Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN) : 0,
 );
 const end = $derived(
   rowHeight
     ? Math.min(
-        items.length,
+        layout.slots.length,
         Math.ceil((scrollTop + height) / rowHeight) + OVERSCAN,
       )
     : 0,
@@ -67,9 +91,9 @@ export function focus() {
 
 const rowId = (index: number) => `${uid}-${index}`;
 
-/** Scrolls just enough to show the row, like a native list. */
+/** Scrolls just enough to show the item's row, like a native list. */
 function reveal(index: number) {
-  const top = index * rowHeight;
+  const top = (layout.lineOf[index] ?? index) * rowHeight;
   if (top < viewport.scrollTop) viewport.scrollTop = top;
   else if (top + rowHeight > viewport.scrollTop + height)
     viewport.scrollTop = top + rowHeight - height;
@@ -109,25 +133,36 @@ function onkeydown(event: KeyboardEvent) {
   onscroll={() => (scrollTop = viewport.scrollTop)}
   {onkeydown}
 >
-  <div class="spacer" style:height="{items.length * rowHeight}px">
-    {#each items.slice(start, end) as item, i (key(item))}
-      <!-- Options are not focusable: the listbox keeps focus and points at the
-           selected row (aria-activedescendant), which also handles the keyboard. -->
-      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_interactive_supports_focus -->
-      <div
-        class="row"
-        id={rowId(start + i)}
-        role="option"
-        aria-selected={selection.keys.has(key(item))}
-        aria-setsize={items.length}
-        aria-posinset={start + i + 1}
-        style:transform="translateY({(start + i) * rowHeight}px)"
-        onclick={(event) =>
-          (selection = pick(order, selection, key(item), pickMode(event)))}
-        ondblclick={() => onopen?.(item)}
-      >
-        {@render row(item)}
-      </div>
+  <div class="spacer" style:height="{layout.slots.length * rowHeight}px">
+    {#each layout.slots.slice(start, end) as slot, i ("index" in slot ? key(items[slot.index] as T) : `heading:${slot.heading}`)}
+      {#if "index" in slot}
+        {@const item = items[slot.index] as T}
+        <!-- Options are not focusable: the listbox keeps focus and points at the
+             selected row (aria-activedescendant), which also handles the keyboard. -->
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_interactive_supports_focus -->
+        <div
+          class="row"
+          id={rowId(slot.index)}
+          role="option"
+          aria-selected={selection.keys.has(key(item))}
+          aria-setsize={items.length}
+          aria-posinset={slot.index + 1}
+          style:transform="translateY({(start + i) * rowHeight}px)"
+          onclick={(event) =>
+            (selection = pick(order, selection, key(item), pickMode(event)))}
+          ondblclick={() => onopen?.(item)}
+        >
+          {@render row(item)}
+        </div>
+      {:else}
+        <div
+          class="heading"
+          role="presentation"
+          style:transform="translateY({(start + i) * rowHeight}px)"
+        >
+          {slot.heading}<span class="count num">{slot.count}</span>
+        </div>
+      {/if}
     {/each}
   </div>
 </div>
@@ -152,6 +187,22 @@ function onkeydown(event: KeyboardEvent) {
     height: var(--row-height);
     border-radius: var(--radius-sm);
     transition: background var(--motion-fast);
+  }
+  .heading {
+    position: absolute;
+    inset: 0 0 auto;
+    display: flex;
+    align-items: flex-end;
+    gap: var(--space-2);
+    height: var(--row-height);
+    padding: 0 var(--space-3) var(--space-2);
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+  }
+  .count {
+    color: var(--color-text-muted);
+    font-weight: normal;
   }
   .row:hover {
     background: var(--fill-hover);

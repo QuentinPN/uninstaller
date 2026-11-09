@@ -28,6 +28,25 @@ export const fr = {
     sortBy: "Trier par",
     sort: { name: "Nom", size: "Taille", date: "Date d'installation" },
     list: "Programmes installés",
+    groupBy: "Regrouper",
+    group: {
+      none: "Aucun",
+      publisher: "Éditeur",
+      date: "Mois d'installation",
+      size: "Taille",
+    },
+    /** Group headings: unknown values, and size ranges from the largest. */
+    groupUnknown: {
+      publisher: "Éditeur inconnu",
+      date: "Date inconnue",
+      size: "Taille inconnue",
+    },
+    sizeRanges: [
+      "1 Go et plus",
+      "100 Mo à 1 Go",
+      "10 à 100 Mo",
+      "Moins de 10 Mo",
+    ],
     show: "Afficher",
     /** Toggles for the kinds hidden by default, and the tag on their rows. */
     kinds: { systemComponent: "Composants système", update: "Mises à jour" },

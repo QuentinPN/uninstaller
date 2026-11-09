@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Program } from "../ipc/bindings";
 import {
+  type GroupKey,
+  groupLabel,
   type ListView,
   type OptionalKind,
   type Sizes,
@@ -16,8 +18,9 @@ function view(
   sort: SortKey,
   sizes: Sizes = NONE,
   shown: ReadonlySet<OptionalKind> = new Set(),
+  group: GroupKey = "none",
 ): ListView {
-  return { query, sort, sizes, shown };
+  return { query, sort, group, sizes, shown };
 }
 
 function program(name: string, extra: Partial<Program> = {}): Program {
@@ -109,6 +112,48 @@ describe("visiblePrograms", () => {
       "zip",
       "Éditeur",
     ]);
+  });
+});
+
+describe("grouping", () => {
+  const all = [
+    program("b", {
+      publisher: "Zeta",
+      installDate: "2024-05-02",
+      estimatedSizeKib: 5,
+    }),
+    program("a", { publisher: "Alpha", installDate: "2023-01-09" }),
+    program("c", { installDate: "2024-05-20", estimatedSizeKib: 2_000_000 }),
+    program("d", { publisher: "Alpha", estimatedSizeKib: 50_000 }),
+  ];
+  const grouped = (group: GroupKey, sort: SortKey = "name") =>
+    visiblePrograms(all, view("", sort, NONE, new Set(), group)).map(
+      (p) => `${groupLabel(p, group, NONE)}: ${p.name}`,
+    );
+
+  it("orders groups, unknown last, and sorts within each", () => {
+    expect(grouped("publisher")).toEqual([
+      "Alpha: a",
+      "Alpha: d",
+      "Zeta: b",
+      "Éditeur inconnu: c",
+    ]);
+    expect(grouped("date", "size")).toEqual([
+      "Mai 2024: c",
+      "Mai 2024: b",
+      "Janvier 2023: a",
+      "Date inconnue: d",
+    ]);
+    expect(grouped("size")).toEqual([
+      "1 Go et plus: c",
+      "10 à 100 Mo: d",
+      "Moins de 10 Mo: b",
+      "Taille inconnue: a",
+    ]);
+  });
+
+  it("has no heading when not grouped", () => {
+    expect(groupLabel(program("a"), "none", NONE)).toBeNull();
   });
 });
 

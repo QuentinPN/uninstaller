@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDate, formatSize } from "./format";
+import { formatDate, formatMonth, formatSize } from "./format";
 
 describe("formatSize", () => {
   it("picks the largest unit below 1024", () => {
@@ -12,5 +12,11 @@ describe("formatSize", () => {
 describe("formatDate", () => {
   it("formats in French without time-zone drift", () => {
     expect(formatDate("2024-03-15")).toBe("15/03/2024");
+  });
+});
+
+describe("formatMonth", () => {
+  it("names the month in French, capitalized", () => {
+    expect(formatMonth("2024-03")).toBe("Mars 2024");
   });
 });

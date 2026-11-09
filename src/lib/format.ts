@@ -6,6 +6,11 @@ const shortDate = new Intl.DateTimeFormat("fr-FR", {
   dateStyle: "short",
   timeZone: "UTC",
 });
+const monthYear = new Intl.DateTimeFormat("fr-FR", {
+  month: "long",
+  year: "numeric",
+  timeZone: "UTC",
+});
 
 /** Size in KiB to "512 Ko", "1,5 Mo", "2 Go"… */
 export function formatSize(kib: number): string {
@@ -21,4 +26,10 @@ export function formatSize(kib: number): string {
 /** `yyyy-mm-dd` to "15/03/2024". */
 export function formatDate(iso: string): string {
   return shortDate.format(new Date(`${iso}T00:00:00Z`));
+}
+
+/** `yyyy-mm` to "Mars 2024", capitalized to stand as a heading. */
+export function formatMonth(month: string): string {
+  const text = monthYear.format(new Date(`${month}-01T00:00:00Z`));
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
