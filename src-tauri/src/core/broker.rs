@@ -4,12 +4,14 @@
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::fs::File;
 use std::hash::{BuildHasher, RandomState};
 use std::io::{self, ErrorKind, Read, Write};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use crate::win::{pipe, process};
+use crate::win::process::{self, Process};
+use crate::win::{pipe, token};
 
 /// Both ends must speak the same version: the broker is the same binary, so a
 /// mismatch means something else is on the pipe.
@@ -31,7 +33,8 @@ pub enum Request {
 /// The broker's answer to one `Request`.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum Reply {
-    Pong,
+    /// Whether the broker really runs with administrator rights.
+    Pong { elevated: bool },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -113,35 +116,28 @@ pub fn main(pipe: &str) -> i32 {
             }
         }
     });
-    match run(pipe, &watch) {
+    match process::parent_id().and_then(|app| run(pipe, app, &watch)) {
         Ok(()) => 0,
         Err(_) => 1,
     }
 }
 
-/// Connects to the app's pipe `name`, makes sure the app is this same program, then
-/// answers until the pipe closes.
-fn run(name: &str, watch: &Watch) -> io::Result<()> {
+/// Connects to the pipe `name`, makes sure process `app` created it, then answers
+/// until the pipe closes.
+fn run(name: &str, app: u32, watch: &Watch) -> io::Result<()> {
     let mut channel = pipe::connect(name)?;
-    if !same_program(pipe::server_pid(&channel)?)? {
-        return Err(io::Error::new(
-            ErrorKind::PermissionDenied,
-            "pipe created by another program",
-        ));
+    if pipe::server_pid(&channel)? != app {
+        return Err(refused("pipe created by another process"));
     }
     serve(&mut channel, |request| watch.busy(|| answer(request)))
-}
-
-/// Whether process `pid` runs this very executable.
-fn same_program(pid: u32) -> io::Result<bool> {
-    let theirs = std::fs::canonicalize(process::image_path(pid)?)?;
-    Ok(theirs == std::fs::canonicalize(std::env::current_exe()?)?)
 }
 
 /// Carries out one request, elevated.
 fn answer(request: Request) -> Reply {
     match request {
-        Request::Ping => Reply::Pong,
+        Request::Ping => Reply::Pong {
+            elevated: token::is_elevated(),
+        },
     }
 }
 
@@ -172,6 +168,51 @@ impl Watch {
             .unwrap_or_else(PoisonError::into_inner)
             .map_or(Duration::ZERO, |last| last.elapsed())
     }
+}
+
+/// The app's end of a broker session.
+pub struct Client(File);
+
+impl Client {
+    /// Starts the broker as administrator (one UAC prompt per session) and connects.
+    #[cfg_attr(
+        test,
+        expect(dead_code, reason = "shows the UAC prompt: tested through `launch`")
+    )]
+    pub fn start() -> io::Result<Self> {
+        let exe = std::env::current_exe()?;
+        Self::launch(|name| process::run_as_admin(&exe, &format!("--broker {name}")))
+    }
+
+    /// Creates the pipe, has `start` launch the broker on it, then accepts that
+    /// process only.
+    fn launch(start: impl FnOnce(&str) -> io::Result<Process>) -> io::Result<Self> {
+        let name = pipe_name();
+        let server = pipe::Server::create(&name)?;
+        let broker = start(&name)?;
+        // A broker that exits before connecting would leave `accept` waiting: its
+        // exit connects in its place, and the id check below refuses that.
+        let exited = broker.try_clone()?;
+        std::thread::spawn(move || {
+            exited.wait();
+            let _ = pipe::connect(&name);
+        });
+        let channel = server.accept()?;
+        if pipe::client_pid(&channel)? != broker.id() {
+            return Err(refused("pipe opened by another process"));
+        }
+        Ok(Self(channel))
+    }
+
+    pub fn call(&mut self, request: &Request) -> io::Result<Reply> {
+        send(&mut self.0, request)?;
+        receive(&mut self.0)?
+            .ok_or_else(|| io::Error::new(ErrorKind::BrokenPipe, "the broker has quit"))
+    }
+}
+
+fn refused(why: &str) -> io::Error {
+    io::Error::new(ErrorKind::PermissionDenied, why)
 }
 
 fn invalid(why: &str) -> io::Error {
@@ -227,41 +268,102 @@ mod tests {
         let server = pipe::Server::create(&name).expect("create");
         let broker = std::thread::spawn(move || {
             let mut channel = server.accept().expect("accept");
-            serve(&mut channel, |Request::Ping| Reply::Pong)
+            serve(&mut channel, |Request::Ping| Reply::Pong {
+                elevated: false,
+            })
         });
         let mut app = pipe::connect(&name).expect("connect");
         for _ in 0..2 {
             send(&mut app, &Request::Ping).expect("send");
-            assert_eq!(receive(&mut app).expect("reply"), Some(Reply::Pong));
+            assert_eq!(
+                receive(&mut app).expect("reply"),
+                Some(Reply::Pong { elevated: false })
+            );
         }
         drop(app);
         broker.join().expect("join").expect("serve ends cleanly");
     }
 
-    #[test]
-    fn broker_answers_this_program_until_the_pipe_closes() {
-        let name = pipe_name();
-        let server = pipe::Server::create(&name).expect("create");
-        let broker = std::thread::spawn(move || run(&name, &Watch::new()));
-        let mut app = server.accept().expect("accept");
-        send(&mut app, &Request::Ping).expect("send");
-        assert_eq!(receive(&mut app).expect("reply"), Some(Reply::Pong));
-        drop(app);
-        broker.join().expect("join").expect("ends cleanly");
+    /// An in-process broker on a thread stands for the elevated one.
+    fn in_process(name: &str) -> io::Result<Process> {
+        let name = name.to_owned();
+        std::thread::spawn(move || run(&name, std::process::id(), &Watch::new()));
+        Process::current()
+    }
+
+    fn child(args: &[&str]) -> io::Result<Process> {
+        let (program, args) = args.split_first().expect("program");
+        let child = std::process::Command::new(program)
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .spawn()?;
+        Ok(child.into())
     }
 
     #[test]
-    fn same_program_tells_this_binary_from_another() {
-        assert!(same_program(std::process::id()).expect("self"));
-        let mut other = std::process::Command::new("ping")
-            .args(["-n", "5", "127.0.0.1"])
-            .stdout(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn ping");
-        let checked = same_program(other.id());
-        let _ = other.kill();
-        let _ = other.wait();
-        assert!(!checked.expect("ping"));
+    fn client_talks_to_its_broker() {
+        let mut client = Client::launch(in_process).expect("launch");
+        for _ in 0..2 {
+            assert_eq!(
+                client.call(&Request::Ping).expect("call"),
+                Reply::Pong {
+                    elevated: token::is_elevated()
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn client_refuses_another_process_on_the_pipe() {
+        let mut stranger = None;
+        let launched = Client::launch(|name| {
+            stranger = Some(pipe::connect(name)?);
+            child(&["ping", "-n", "5", "127.0.0.1"])
+        });
+        assert!(stranger.is_some());
+        assert_eq!(
+            launched.err().map(|e| e.kind()),
+            Some(ErrorKind::PermissionDenied)
+        );
+    }
+
+    /// Refused one way or another (its stand-in may close first), but never waits.
+    #[test]
+    fn client_does_not_wait_for_a_broker_that_died() {
+        assert!(Client::launch(|_| child(&["cmd", "/c", "exit 1"])).is_err());
+    }
+
+    #[test]
+    fn broker_refuses_a_pipe_from_another_process() {
+        let name = pipe_name();
+        let server = pipe::Server::create(&name).expect("create");
+        let broker = std::thread::spawn(move || run(&name, 4, &Watch::new()));
+        let _app = server.accept().expect("accept");
+        let refused = broker.join().expect("join");
+        assert_eq!(
+            refused.err().map(|e| e.kind()),
+            Some(ErrorKind::PermissionDenied)
+        );
+    }
+
+    /// The real elevated broker: shows the UAC prompt, so run by hand after
+    /// `cargo build`, and accept the prompt.
+    #[test]
+    #[ignore = "administrateur : affiche l'invite UAC"]
+    fn elevated_broker_answers() {
+        let exe = std::env::current_exe().expect("exe");
+        let app = exe
+            .parent()
+            .and_then(|deps| deps.parent())
+            .expect("target dir")
+            .join("uninstaller.exe");
+        let mut client =
+            Client::launch(|name| process::run_as_admin(&app, &format!("--broker {name}")))
+                .expect("launch");
+        assert_eq!(
+            client.call(&Request::Ping).expect("call"),
+            Reply::Pong { elevated: true }
+        );
     }
 
     #[test]

@@ -65,6 +65,21 @@ Tailles calculées (tranche 5) : à chaque passage en Loaded, `computeSizes` par
 
 Le manifeste est réécrit par fichier temporaire + renommage ; une empreinte qui ne correspond plus donne `Error::Corrupt` à l'ouverture. Seul le dernier élément peut être `Pending` ou `Copied` ; sinon `Error::Corrupt` et le lot reste tel quel. La reprise tourne sur un thread au lancement (`run()`), sur `%LOCALAPPDATA%\Uninstaller\quarantine`, et ne fait rien si le dossier n'existe pas. Limite connue : un plantage pendant une restauration d'un autre volume, après la copie vérifiée, laisse l'élément `Moved` avec l'origine complète ; la restauration suivante répond `Exists`, sans perte. États du lot : `Active → Purging → (dossier retiré)`. `Batch::purge` termine d'abord une étape interrompue, écrit `Purging`, retire `items\`, puis le manifeste et le dossier ; un plantage entre deux laisse `Purging`, que la reprise au lancement termine. Un lot `Purging` refuse `quarantine`, `quarantine_key` et `restore` (`Error::Purging`). `purge_expired` choisit les lots dont la date de création (secondes Unix, dans le manifeste et son empreinte) a au moins le délai donné. Pas encore fait : `Restoring → Restored` au niveau du lot.
 
+### 7. Session du broker (`core/broker.rs`, Phase 2 tranches 10 à 12)
+
+| État | Événement | Suivant |
+| --- | --- | --- |
+| Aucun | `Client::start` : tube créé, invite UAC | Lancement |
+| Lancement | invite refusée ou échec de `ShellExecuteExW` | Aucun (erreur, tube fermé) |
+| Lancement | client connecté, PID égal au broker lancé | Prêt |
+| Lancement | autre PID, ou broker mort avant de se connecter | Aucun (refusé) |
+| Prêt | requête | Occupé |
+| Occupé | réponse envoyée | Prêt |
+| Prêt | tube fermé par l'application | Terminé (code 0) |
+| Prêt | 5 min sans requête | Terminé (code 0) |
+
+Côté broker, un tube créé par un autre processus que son parent donne le code 1 avant toute requête. Il ne quitte jamais pendant `Occupé`.
+
 ### 2. Scan des restes · 4. Session de suivi d'installation · 5. Mode Chasseur
 
 À détailler en Phase 3-8, au même format.
