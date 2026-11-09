@@ -48,9 +48,17 @@ pub fn run() {
         std::process::exit(core::broker::main(pipe));
     }
     commands::prefetch_programs();
-    // Moves a crash interrupted are settled before anything else touches the batches.
+    // Moves a crash interrupted are settled before anything else touches the batches,
+    // then batches older than the delay are purged (SECURITY.md 1).
     if let Some(root) = core::quarantine::root() {
-        std::thread::spawn(move || core::quarantine::resume_all(&root));
+        std::thread::spawn(move || {
+            core::quarantine::resume_all(&root);
+            core::quarantine::purge_expired(
+                &root,
+                core::quarantine::PURGE_DELAY,
+                std::time::SystemTime::now(),
+            );
+        });
     }
     tauri::Builder::default()
         .invoke_handler(ipc().invoke_handler())
