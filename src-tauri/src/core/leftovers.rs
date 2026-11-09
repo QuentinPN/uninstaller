@@ -1,13 +1,15 @@
-//! Leftover scan (F5), files part: the folders a removed program may leave in the
-//! shared roots (Program Files, ProgramData, AppData, Start Menus) and its shortcuts.
-//! Read only: it proposes, the quarantine moves. Every candidate passes `protect::is_protected`; links and junctions are never
-//! listed nor followed.
+//! Leftover scan (F5): the folders a removed program may leave in the shared roots
+//! (Program Files, ProgramData, AppData, Start Menus), its shortcuts and its registry
+//! keys under `SOFTWARE`. Read only: it proposes, the quarantine moves. Every folder
+//! passes `protect::is_protected`, every key `protect::is_protected_key`; links and
+//! junctions are never listed nor followed.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::core::inventory::Program;
 use crate::core::protect;
+use crate::win::registry::{Hive, Key, View};
 use crate::win::shortcut;
 
 /// How surely a folder belongs to the program (SECURITY.md 5). Ordered from the
@@ -28,6 +30,13 @@ pub struct Leftover {
     pub confidence: Confidence,
 }
 
+/// A registry key as regedit shows it (`HKEY_CURRENT_USER\Software\Acme\Widget`).
+#[derive(Debug, PartialEq, Eq)]
+pub struct KeyLeftover {
+    pub key: String,
+    pub confidence: Confidence,
+}
+
 /// What the scan matches folders against, read from the inventory entry.
 pub struct Target {
     product: String,
@@ -35,9 +44,10 @@ pub struct Target {
     install: Option<PathBuf>,
     /// Other programs' install folders, normalized: a folder holding one is never ours.
     others: Vec<PathBuf>,
-    /// Another installed program has the same name (other versions, editions): the name
-    /// alone no longer tells whose a folder is.
-    twin: bool,
+    /// Other programs' names and publishers, as `key` reduces them: a name one of them
+    /// also matches no longer tells whose a folder or key is.
+    other_names: Vec<String>,
+    other_publishers: Vec<String>,
 }
 
 /// Names shorter than this match nothing: too many unrelated folders share them.
@@ -102,7 +112,8 @@ impl Target {
             // An install folder such as `C:\Program Files` says nothing about the program.
             install: install.filter(|folder| !protect::is_protected(folder)),
             others: others.iter().map(|o| protect::normalize(o)).collect(),
-            twin: false,
+            other_names: Vec::new(),
+            other_publishers: Vec::new(),
         }
     }
 
@@ -116,7 +127,12 @@ impl Target {
             others().filter_map(Program::install_folder).collect(),
         );
         Self {
-            twin: others().any(|other| key(&other.name, &[]) == target.product),
+            other_names: others().map(|other| key(&other.name, &[])).collect(),
+            other_publishers: others()
+                .filter_map(|other| other.publisher.as_deref())
+                .map(|publisher| key(publisher, &COMPANY_WORDS))
+                .filter(|publisher| publisher.len() >= MIN_KEY)
+                .collect(),
             ..target
         }
     }
@@ -150,6 +166,44 @@ impl Target {
             keep(install, under_publisher);
         }
         sorted(found)
+    }
+
+    /// Subkeys of `roots` (`SOFTWARE` keys) named after the program, and of its
+    /// publisher's key, surest first, then by key. Names only: values are not read.
+    pub fn keys(&self, roots: &[(Hive, &str)]) -> Vec<KeyLeftover> {
+        if self.product.len() < MIN_KEY {
+            return Vec::new();
+        }
+        let mut found = Vec::new();
+        let mut keep = |hive: Hive, path: String, name: &str, under_publisher: bool| {
+            if !protect::is_protected_key(hive, &path)
+                && let Some(confidence) = self.rate_name(name, false, under_publisher)
+            {
+                let key = format!(r"{}\{path}", hive.name());
+                found.push(KeyLeftover { key, confidence });
+            }
+        };
+        for &(hive, root) in roots {
+            let Some(software) = Key::open(hive, root, View::Native64) else {
+                continue;
+            };
+            for name in software.subkey_names() {
+                let path = format!(r"{root}\{name}");
+                if !self.is_publisher_name(&name) {
+                    keep(hive, path, &name, false);
+                    continue;
+                }
+                // Shared by the publisher's programs: only its children can be ours.
+                let children = software
+                    .subkey(&name)
+                    .map(|publisher| publisher.subkey_names());
+                for child in children.unwrap_or_default() {
+                    keep(hive, format!(r"{path}\{child}"), &child, true);
+                }
+            }
+        }
+        found.sort_by(|a, b| (a.confidence, &a.key).cmp(&(b.confidence, &b.key)));
+        found
     }
 
     /// The shortcuts that lead to the program: into its install folder, or named after
@@ -189,9 +243,12 @@ impl Target {
             .map(|name| key(&name.to_string_lossy(), &[]))
             .collect();
         let exact = names.contains(&self.product);
-        let product = exact && !self.twin;
-        let fragment =
-            !product && (exact || names.iter().any(|name| is_fragment(name, &self.product)));
+        let product = exact && !self.shared(&self.product);
+        let fragment = !product
+            && (exact
+                || names
+                    .iter()
+                    .any(|name| is_fragment(name, &self.product) && !self.shared(name)));
         match (into_install, product) {
             (true, true) => Some(Confidence::Safe),
             (true, false) | (false, true) => Some(Confidence::Moderate),
@@ -213,14 +270,32 @@ impl Target {
         {
             return None;
         }
-        let name = key(&folder.file_name()?.to_string_lossy(), &[]);
         let install = self
             .install
             .as_deref()
             .is_some_and(|i| same_path(i, folder));
-        let exact = name == self.product;
-        let product = exact && !self.twin;
-        let fragment = !product && (exact || is_fragment(&name, &self.product));
+        self.rate_name(
+            &folder.file_name()?.to_string_lossy(),
+            install,
+            under_publisher,
+        )
+    }
+
+    /// Rates a folder or key by its name; `install` when it is the install folder. Under
+    /// the publisher, the product without the publisher's name counts as the product
+    /// ("Google\Chrome" for Google Chrome).
+    fn rate_name(&self, name: &str, install: bool, under_publisher: bool) -> Option<Confidence> {
+        let name = key(name, &[]);
+        let short = self
+            .publisher
+            .as_deref()
+            .and_then(|publisher| self.product.strip_prefix(publisher))
+            .filter(|short| short.len() >= MIN_KEY);
+        let exact = name == self.product || (under_publisher && short == Some(name.as_str()));
+        // "Edge" stands for Microsoft Edge only if no other program extends its name.
+        let shared = self.shared(&name) || (exact && self.shared(&self.product));
+        let product = exact && !shared;
+        let fragment = !product && (exact || (!shared && is_fragment(&name, &self.product)));
         let signals = [install, product, under_publisher && (product || fragment)];
         match signals.into_iter().filter(|&s| s).count() {
             2.. => Some(Confidence::Safe),
@@ -230,12 +305,27 @@ impl Target {
         }
     }
 
+    /// Another program has this name, a name starting with it ("Python" for every
+    /// Python component) or this publisher: the name alone is no proof.
+    fn shared(&self, name: &str) -> bool {
+        self.other_names
+            .iter()
+            .any(|other| other == name || is_fragment(name, other))
+            || self
+                .other_publishers
+                .iter()
+                .any(|publisher| publisher == name)
+    }
+
     fn is_publisher(&self, folder: &Path) -> bool {
+        folder
+            .file_name()
+            .is_some_and(|name| self.is_publisher_name(&name.to_string_lossy()))
+    }
+
+    fn is_publisher_name(&self, name: &str) -> bool {
         self.publisher.as_deref().is_some_and(|publisher| {
-            publisher.len() >= MIN_KEY
-                && folder
-                    .file_name()
-                    .is_some_and(|n| key(&n.to_string_lossy(), &COMPANY_WORDS) == publisher)
+            publisher.len() >= MIN_KEY && key(name, &COMPANY_WORDS) == publisher
         })
     }
 }
@@ -411,6 +501,7 @@ fn subfolders(folder: &Path) -> impl Iterator<Item = PathBuf> {
 mod tests {
     use super::*;
     use crate::core::test_support::junction;
+    use crate::win::registry;
 
     #[test]
     fn keys_keep_what_names_the_product() {
@@ -557,7 +648,7 @@ mod tests {
             target.scan(std::slice::from_ref(&dir))[0].confidence,
             Confidence::Safe
         );
-        target.twin = true;
+        target.other_names = vec!["localdb".to_owned()];
         assert_eq!(
             target.scan(std::slice::from_ref(&dir))[0].confidence,
             Confidence::Advanced
@@ -579,6 +670,7 @@ mod tests {
     #[test]
     fn real_programs_get_no_protected_folder() {
         let (roots, links) = (roots(), shortcuts(&shortcut_roots()));
+        let software = crate::core::registry::paths::SOFTWARE_ROOTS;
         let all = crate::core::inventory::scan();
         for program in &all {
             let target = Target::of(program, &all);
@@ -593,7 +685,83 @@ mod tests {
                 assert!(!protect::is_protected(&leftover.path));
                 assert!(real_folder(&leftover.path) || leftover.path.is_file());
             }
+            for leftover in target.keys(&software) {
+                println!(
+                    "{} · {:?} · {}",
+                    program.name, leftover.confidence, leftover.key
+                );
+                let (hive, path) = Hive::parse(&leftover.key).unwrap();
+                assert!(!protect::is_protected_key(hive, path));
+            }
         }
+    }
+
+    #[test]
+    fn a_name_other_programs_share_is_not_proposed() {
+        let mut target = Target::new("Python 3.12 Core", None, None, vec![]);
+        assert_eq!(
+            target.rate_name("Python", false, false),
+            Some(Confidence::Advanced)
+        );
+        target.other_names = vec!["pythondocs".to_owned()];
+        assert_eq!(target.rate_name("Python", false, false), None);
+        target.other_publishers = vec!["pythoncore".to_owned()];
+        assert_eq!(
+            target.rate_name("Python Core", false, false),
+            Some(Confidence::Advanced)
+        );
+    }
+
+    /// Keys under `HKCU\Software\UninstallerTest` stand in for `SOFTWARE`.
+    #[test]
+    fn rates_registry_keys_by_name() {
+        let root = registry::test_key::fresh("leftover-keys");
+        let subkeys = [
+            "Acme Widget",
+            r"Acme\Widget",
+            r"Acme\Other",
+            "Acme Widget Tools",
+            "Unrelated",
+        ];
+        for sub in subkeys {
+            Key::create(Hive::CurrentUser, &format!(r"{root}\{sub}"), View::Native64).unwrap();
+        }
+        let target = Target::new("Acme Widget 2.0", Some("Acme, Inc."), None, Vec::new());
+
+        let found = target.keys(&[(Hive::CurrentUser, &root)]);
+
+        let expected: Vec<_> = [
+            (r"Acme\Widget", Confidence::Safe),
+            ("Acme Widget", Confidence::Moderate),
+            ("Acme Widget Tools", Confidence::Advanced),
+        ]
+        .into_iter()
+        .map(|(sub, confidence)| KeyLeftover {
+            key: format!(r"HKEY_CURRENT_USER\{root}\{sub}"),
+            confidence,
+        })
+        .collect();
+        registry::test_key::clear(&root);
+        assert_eq!(found, expected);
+    }
+
+    #[test]
+    fn a_short_name_another_program_extends_is_no_proof() {
+        let mut target = Target::new(
+            "Microsoft Edge",
+            Some("Microsoft Corporation"),
+            None,
+            vec![],
+        );
+        assert_eq!(
+            target.rate_name("Edge", false, true),
+            Some(Confidence::Safe)
+        );
+        target.other_names = vec!["microsoftedgeupdate".to_owned()];
+        assert_eq!(
+            target.rate_name("Edge", false, true),
+            Some(Confidence::Advanced)
+        );
     }
 
     #[test]
