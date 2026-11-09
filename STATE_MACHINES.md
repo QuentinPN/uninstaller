@@ -34,7 +34,9 @@ Invariants : une seule tâche active par programme ; rien n'est supprimé avant 
 
 Panneau de détails (tranche 2) : fermé → ouvert par Espace ou double-clic sur la ligne sélectionnée ; ouvert, il suit la sélection ; Échap ou ✕ le ferme et rend le focus à la liste. Si le programme sélectionné disparaît (rechargement), le panneau se ferme de lui-même.
 
-Une source de registre illisible (clé absente, accès refusé) est ignorée côté Rust sans faire échouer l'ensemble. Icônes (tranche 4) : chaque ligne demande `icon://<id>` à l'affichage ; 404 ou image illisible → glyphe, retenu pour cette URL.
+Une source de registre illisible (clé absente, accès refusé) est ignorée côté Rust sans faire échouer l'ensemble. Filtre de type (tranche 6) : `shown` (vide au départ) ; chaque bascule ajoute ou retire « Composants système » ou « Mises à jour » ; les applications restent toujours visibles. Pas de persistance : chaque lancement repart du filtre par défaut.
+
+Icônes (tranche 4) : chaque ligne demande `icon://<id>` à l'affichage ; 404 ou image illisible → glyphe, retenu pour cette URL.
 
 Tailles calculées (tranche 5) : à chaque passage en Loaded, `computeSizes` part avec un nouveau `Channel` et `sizing = true` (« Calcul des tailles… » dans l'en-tête). Chaque paquet remplit `sizes` (id → Kio) ; liste, tri et totaux préfèrent la taille mesurée à la taille déclarée. Fin ou erreur → `sizing = false`, sans message : les tailles déclarées restent. Un « Réessayer » vide `sizes` et incrémente `generation` : les paquets d'un flux plus ancien sont ignorés.
 

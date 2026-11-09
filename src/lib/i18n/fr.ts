@@ -28,6 +28,10 @@ export const fr = {
     sortBy: "Trier par",
     sort: { name: "Nom", size: "Taille", date: "Date d'installation" },
     list: "Programmes installés",
+    show: "Afficher",
+    /** Toggles for the kinds hidden by default, and the tag on their rows. */
+    kinds: { systemComponent: "Composants système", update: "Mises à jour" },
+    kind: { systemComponent: "Composant système", update: "Mise à jour" },
     scope: { machine64: "64 bits", machine32: "32 bits", user: "Utilisateur" },
     scopeHint: {
       machine64: "Installé pour tous les utilisateurs, 64 bits",

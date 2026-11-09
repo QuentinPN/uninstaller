@@ -1,6 +1,6 @@
 // What the Programs screen shows: default filter (F1), search and sort (F2).
 
-import type { Program } from "../ipc/bindings";
+import type { Kind, Program } from "../ipc/bindings";
 
 export type SortKey = "name" | "size" | "date";
 
@@ -49,16 +49,32 @@ const COMPARE: Record<SortKey, (sizes: Sizes) => Compare> = {
   date: () => (a, b) => descending(a.installDate, b.installDate),
 };
 
-/** Applications only (system components and updates stay hidden), filtered and sorted. */
+/** Kinds hidden by default (F1), each shown on request. */
+export const OPTIONAL_KINDS = ["systemComponent", "update"] as const;
+export type OptionalKind = (typeof OPTIONAL_KINDS)[number];
+
+export interface ListView {
+  query: string;
+  sort: SortKey;
+  sizes: Sizes;
+  /** Optional kinds the user chose to show; applications are always shown. */
+  shown: ReadonlySet<OptionalKind>;
+}
+
+function isShown(kind: Kind, shown: ReadonlySet<OptionalKind>): boolean {
+  return kind === "app" || shown.has(kind);
+}
+
+/** Programs of the shown kinds matching the search, sorted. */
 export function visiblePrograms(
   all: readonly Program[],
-  query: string,
-  sort: SortKey,
-  sizes: Sizes,
+  { query, sort, sizes, shown }: ListView,
 ): Program[] {
   const needle = normalize(query.trim());
   return all
-    .filter((p) => p.kind === "app" && (needle === "" || matches(p, needle)))
+    .filter(
+      (p) => isShown(p.kind, shown) && (needle === "" || matches(p, needle)),
+    )
     .sort(COMPARE[sort](sizes));
 }
 

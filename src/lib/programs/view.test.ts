@@ -1,8 +1,24 @@
 import { describe, expect, it } from "vitest";
 import type { Program } from "../ipc/bindings";
-import { totalSizeKib, visiblePrograms } from "./view";
+import {
+  type ListView,
+  type OptionalKind,
+  type Sizes,
+  type SortKey,
+  totalSizeKib,
+  visiblePrograms,
+} from "./view";
 
 const NONE = new Map<string, number>();
+
+function view(
+  query: string,
+  sort: SortKey,
+  sizes: Sizes = NONE,
+  shown: ReadonlySet<OptionalKind> = new Set(),
+): ListView {
+  return { query, sort, sizes, shown };
+}
 
 function program(name: string, extra: Partial<Program> = {}): Program {
   return {
@@ -38,29 +54,43 @@ describe("visiblePrograms", () => {
   ];
 
   it("hides system components and updates", () => {
-    expect(names(visiblePrograms(all, "", "name", NONE))).toEqual([
+    expect(names(visiblePrograms(all, view("", "name")))).toEqual([
       "archive",
       "Éditeur",
       "zip",
     ]);
   });
 
+  it("shows system components and updates on request", () => {
+    const shown = new Set<OptionalKind>(["update"]);
+    expect(names(visiblePrograms(all, view("", "name", NONE, shown)))).toEqual([
+      "archive",
+      "Éditeur",
+      "KB123",
+      "zip",
+    ]);
+    shown.add("systemComponent");
+    expect(
+      names(visiblePrograms(all, view("pilote", "name", NONE, shown))),
+    ).toEqual(["Pilote"]);
+  });
+
   it("searches name, publisher, comments and folder, ignoring accents and case", () => {
-    expect(names(visiblePrograms(all, "EDITEUR", "name", NONE))).toEqual([
+    expect(names(visiblePrograms(all, view("EDITEUR", "name")))).toEqual([
       "Éditeur",
     ]);
-    expect(names(visiblePrograms(all, "uninstaller", "name", NONE))).toEqual([
+    expect(names(visiblePrograms(all, view("uninstaller", "name")))).toEqual([
       "Éditeur",
     ]);
     const withFolder = [program("a", { installLocation: "C:\\Outils\\A" })];
-    expect(names(visiblePrograms(withFolder, "outils", "name", NONE))).toEqual([
+    expect(names(visiblePrograms(withFolder, view("outils", "name")))).toEqual([
       "a",
     ]);
   });
 
   it("sorts by measured size when there is one", () => {
     const measured = new Map([[program("archive").id, 1000]]);
-    expect(names(visiblePrograms(all, "", "size", measured))).toEqual([
+    expect(names(visiblePrograms(all, view("", "size", measured)))).toEqual([
       "archive",
       "Éditeur",
       "zip",
@@ -68,12 +98,12 @@ describe("visiblePrograms", () => {
   });
 
   it("sorts size and date descending with unknown values last", () => {
-    expect(names(visiblePrograms(all, "", "size", NONE))).toEqual([
+    expect(names(visiblePrograms(all, view("", "size")))).toEqual([
       "Éditeur",
       "zip",
       "archive",
     ]);
-    expect(names(visiblePrograms(all, "", "date", NONE))).toEqual([
+    expect(names(visiblePrograms(all, view("", "date")))).toEqual([
       "archive",
       "zip",
       "Éditeur",

@@ -1,7 +1,7 @@
 <script lang="ts">
 import { Channel } from "@tauri-apps/api/core";
 import { onMount } from "svelte";
-import { SvelteMap } from "svelte/reactivity";
+import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import { formatDate, formatSize } from "../format";
 import { fr } from "../i18n/fr";
 import { commands, type Program, type ProgramSize } from "../ipc/bindings";
@@ -10,7 +10,14 @@ import { EMPTY_SELECTION, type Selection } from "../ui/listNav";
 import VirtualList from "../ui/VirtualList.svelte";
 import AppIcon from "./AppIcon.svelte";
 import ProgramDetails from "./ProgramDetails.svelte";
-import { type SortKey, sizeKib, totalSizeKib, visiblePrograms } from "./view";
+import {
+  OPTIONAL_KINDS,
+  type OptionalKind,
+  type SortKey,
+  sizeKib,
+  totalSizeKib,
+  visiblePrograms,
+} from "./view";
 
 const SORT_KEYS: SortKey[] = ["name", "size", "date"];
 /** Placeholder rows while the inventory loads. */
@@ -26,6 +33,12 @@ const sizes = new SvelteMap<string, number>();
 let sizing = $state(false);
 /** Bumped by each load, so a stale stream from before a retry is ignored. */
 let generation = 0;
+/** System components and updates the user chose to show (hidden by default, F1). */
+const shown = new SvelteSet<OptionalKind>();
+
+function toggle(kind: OptionalKind) {
+  if (!shown.delete(kind)) shown.add(kind);
+}
 let detailsOpen = $state(false);
 let list = $state<VirtualList<Program>>();
 
@@ -41,7 +54,7 @@ const chosen = $derived(
 );
 
 const visible = $derived(
-  programs ? visiblePrograms(programs, query, sort, sizes) : [],
+  programs ? visiblePrograms(programs, { query, sort, sizes, shown }) : [],
 );
 
 function load() {
@@ -122,6 +135,13 @@ onMount(load);
       {/each}
     </select>
   </label>
+  <div class="kinds" role="group" aria-label={fr.programs.show}>
+    {#each OPTIONAL_KINDS as kind (kind)}
+      <button class="kind-toggle" aria-pressed={shown.has(kind)} onclick={() => toggle(kind)}>
+        {fr.programs.kinds[kind]}
+      </button>
+    {/each}
+  </div>
 </div>
 
 <!-- Escape bubbles up from the list or the panel. -->
@@ -155,7 +175,13 @@ onMount(load);
         <AppIcon program={p} />
         <div class="names">
           <span class="name">{p.name}</span>
-          {#if p.publisher}<span class="publisher">{p.publisher}</span>{/if}
+          {#if p.kind !== "app" || p.publisher}
+            <span class="publisher">
+              {[p.kind !== "app" ? fr.programs.kind[p.kind] : null, p.publisher]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
+          {/if}
         </div>
         <span class="size num">
           {size != null ? formatSize(size) : ""}
@@ -237,6 +263,27 @@ onMount(load);
   }
   option {
     background: var(--color-elevated);
+  }
+  .kinds {
+    display: flex;
+    gap: var(--space-2);
+    margin-left: auto;
+  }
+  .kind-toggle {
+    padding: var(--space-1) var(--space-3);
+    border: none;
+    border-radius: var(--radius-pill);
+    background: var(--fill-glass);
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+  }
+  .kind-toggle:hover {
+    background: var(--fill-hover);
+  }
+  .kind-toggle[aria-pressed="true"] {
+    background: var(--color-primary);
+    color: var(--color-on-primary);
   }
   .retry {
     padding: var(--space-2) var(--space-4);
