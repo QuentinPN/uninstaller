@@ -38,6 +38,10 @@ fn icon_response(path: &str) -> tauri::http::Response<Vec<u8>> {
 
 pub fn run() {
     commands::prefetch_programs();
+    // Moves a crash interrupted are settled before anything else touches the batches.
+    if let Some(root) = core::quarantine::root() {
+        std::thread::spawn(move || core::quarantine::resume_all(&root));
+    }
     tauri::Builder::default()
         .invoke_handler(ipc().invoke_handler())
         // Extraction is blocking Win32 work: off the main thread, one task per icon.

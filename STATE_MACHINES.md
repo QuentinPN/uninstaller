@@ -48,12 +48,14 @@ Tailles calculées (tranche 5) : à chaque passage en Loaded, `computeSizes` par
 | — | `quarantine(chemin)` | Pending | ligne écrite dans le manifeste **avant** le déplacement |
 | Pending | déplacement réussi | Moved | manifeste réécrit |
 | Pending | déplacement échoué (autre volume : `OtherVolume`) | — | ligne retirée, manifeste réécrit |
+| Pending | démarrage (`resume_all`), élément présent dans le lot | Moved | manifeste réécrit |
+| Pending | démarrage, élément absent du lot | — | ligne retirée (le fichier n'a pas quitté son origine) |
 | Moved | `restore()`, origine libre, contenu intact | Restored | élément remis en place, manifeste réécrit |
 | Moved | `restore()`, origine occupée | Moved | `Error::Exists`, arrêt, rien écrasé |
 | Moved | `restore()`, empreinte différente | Moved | `Error::Altered`, arrêt |
 | Restored | `restore()` | Restored | ignoré |
 
-Le manifeste est réécrit par fichier temporaire + renommage ; une empreinte qui ne correspond plus donne `Error::Corrupt` à l'ouverture. Pas encore faits : reprise au démarrage d'un élément resté `Pending`, états du lot (`Active → Restoring → Restored` / `Purging → Purged`).
+Le manifeste est réécrit par fichier temporaire + renommage ; une empreinte qui ne correspond plus donne `Error::Corrupt` à l'ouverture. Seul le dernier élément peut être `Pending` ; sinon `Error::Corrupt` et le lot reste tel quel. La reprise tourne sur un thread au lancement (`run()`), sur `%LOCALAPPDATA%\Uninstaller\quarantine`, et ne fait rien si le dossier n'existe pas. Pas encore faits : états du lot (`Active → Restoring → Restored` / `Purging → Purged`).
 
 ### 2. Scan des restes · 4. Session de suivi d'installation · 5. Mode Chasseur
 

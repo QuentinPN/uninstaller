@@ -188,6 +188,24 @@ impl Batch {
         Ok(())
     }
 
+    /// Finishes what a crash interrupted. Only the last item can be `Pending` (one
+    /// move at a time): if it reached the batch it becomes `Moved`, otherwise it leaves
+    /// the manifest. Running it again changes nothing.
+    pub fn resume(&mut self) -> Result<(), Error> {
+        let Some(index) = self.items.iter().position(|i| i.state == State::Pending) else {
+            return Ok(());
+        };
+        if index + 1 != self.items.len() {
+            return Err(Error::Corrupt);
+        }
+        if fs::symlink_metadata(self.stored(index)).is_ok() {
+            self.set_state(index, State::Moved)
+        } else {
+            self.items.pop();
+            self.save()
+        }
+    }
+
     fn stored(&self, index: usize) -> PathBuf {
         self.dir.join(STORE).join(index.to_string())
     }
@@ -213,6 +231,32 @@ impl Batch {
         fs::rename(next, self.dir.join(MANIFEST))?;
         Ok(())
     }
+}
+
+/// `%LOCALAPPDATA%\Uninstaller\quarantine` (ARCHITECTURE.md, Données locales).
+pub fn root() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA").map(|local| {
+        PathBuf::from(local)
+            .join("Uninstaller")
+            .join("quarantine")
+    })
+}
+
+/// At startup: resumes every batch under `root`. A batch that cannot be read is left
+/// as it is, for the Backups screen to show; returns how many were resumed.
+pub fn resume_all(root: &Path) -> usize {
+    let Ok(entries) = fs::read_dir(root) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
+        .filter(|entry| {
+            Batch::open(&entry.path())
+                .and_then(|mut batch| batch.resume())
+                .is_ok()
+        })
+        .count()
 }
 
 fn items_hash(items: &[Item]) -> Result<String, Error> {
@@ -303,6 +347,45 @@ mod tests {
         fs::write(batch.stored(0), b"tampered").unwrap();
         assert!(matches!(batch.restore(), Err(Error::Altered)));
         assert!(!exe.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A batch whose last item was written `Pending`, as a crash would leave it.
+    fn interrupted(dir: &Path, moved: bool) -> Batch {
+        let mut batch = Batch::create(&dir.join("quarantine"), "lot").unwrap();
+        let exe = dir.join("app\\app.exe");
+        batch.items.push(Item {
+            origin: exe.clone(),
+            kind: Kind::File,
+            hash: Some(file_hash(&exe).unwrap()),
+            state: State::Pending,
+        });
+        batch.save().unwrap();
+        if moved {
+            fs::rename(&exe, batch.stored(0)).unwrap();
+        }
+        batch
+    }
+
+    #[test]
+    fn resumes_an_interrupted_move_either_way() {
+        let dir = sandbox("resume");
+        let root = dir.join("quarantine");
+
+        interrupted(&dir, false);
+        assert_eq!(resume_all(&root), 1);
+        assert!(Batch::open(&root.join("lot")).unwrap().items().is_empty());
+        assert!(dir.join("app\\app.exe").exists());
+        fs::remove_dir_all(&root).unwrap();
+
+        interrupted(&dir, true);
+        assert_eq!(resume_all(&root), 1);
+        assert_eq!(resume_all(&root), 1, "idempotent");
+        let mut batch = Batch::open(&root.join("lot")).unwrap();
+        assert_eq!(batch.items()[0].state, State::Moved);
+        batch.restore().unwrap();
+        assert_eq!(fs::read(dir.join("app\\app.exe")).unwrap(), b"binary");
+        assert_eq!(resume_all(&dir.join("absent")), 0);
         fs::remove_dir_all(dir).unwrap();
     }
 
