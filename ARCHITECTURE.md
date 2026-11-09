@@ -41,7 +41,7 @@ Proposition : l'application démarre non élevée (lecture, recherche, export). 
 
 ## Export (F19)
 
-Le contenu (HTML, CSV, TXT) est construit côté UI (`src/lib/programs/export.ts`) : elle seule connaît l'ordre affiché, les filtres, les tailles mesurées et les libellés français. Rust ne fait qu'ouvrir la boîte « Enregistrer sous » (`win/dialog.rs`, `IFileSaveDialog` sur un thread COM STA dédié) et écrire le fichier ; pas de module `core/export`. L'impression directe est reportée : la CSP interdit les styles en ligne d'un `iframe` ; la page HTML exportée s'imprime depuis le navigateur.
+Le contenu (HTML, CSV, TXT) est construit côté UI (`src/lib/programs/export.ts`) : elle seule connaît l'ordre affiché, les filtres, les tailles mesurées et les libellés français. Rust ne fait qu'ouvrir la boîte « Enregistrer sous » (`win/dialog.rs`, `IFileSaveDialog` sur un thread COM STA dédié) et écrire le fichier ; pas de module `core/export`. L'impression (« Imprimer… » du même menu) réutilise le même tableau (`listDocument`) : `PrintSheet.svelte` l'ajoute à la fin de `<body>`, `@media print` (`app.css`) masque `#app`, puis `window.print()` ouvre la boîte d'impression de WebView2 ; la feuille disparaît à `afterprint`. Pas d'`iframe` ni de style en ligne : la CSP `style-src 'self'` reste inchangée.
 
 ## Données locales
 

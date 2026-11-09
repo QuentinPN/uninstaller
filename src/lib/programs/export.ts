@@ -1,4 +1,5 @@
-// List export (F19): what the list shows, in its order, as HTML, CSV or text.
+// List export and printing (F19): what the list shows, in its order, as HTML, CSV,
+// text or paper.
 
 import { formatDate, formatSize, isoDate } from "../format";
 import { fr } from "../i18n/fr";
@@ -40,13 +41,31 @@ function table(programs: readonly Program[], sizes: Sizes): string[][] {
   ];
 }
 
-/** "891 programmes · 120 Go · exporté le 09/11/2026". */
-function summary(programs: readonly Program[], sizes: Sizes, now: Date) {
-  return [
-    fr.programs.count(programs.length),
-    formatSize(totalSizeKib(programs, sizes)),
-    fr.programs.export.exportedOn(formatDate(isoDate(now))),
-  ].join(" · ");
+/** The list as a titled table, whatever it is written to. */
+export interface ListDocument {
+  title: string;
+  /** "891 programmes · 120 Go · exporté le 09/11/2026". */
+  about: string;
+  /** Heading row first. */
+  rows: string[][];
+}
+
+/** `stamp` dates the document, like `fr.programs.export.exportedOn`. */
+export function listDocument(
+  programs: readonly Program[],
+  sizes: Sizes,
+  now: Date,
+  stamp: (date: string) => string,
+): ListDocument {
+  return {
+    title: fr.programs.list,
+    about: [
+      fr.programs.count(programs.length),
+      formatSize(totalSizeKib(programs, sizes)),
+      stamp(formatDate(isoDate(now))),
+    ].join(" · "),
+    rows: table(programs, sizes),
+  };
 }
 
 /** Semicolon-separated for French spreadsheets; quoted when needed; a leading
@@ -60,7 +79,7 @@ function csv(rows: string[][]): string {
 }
 
 /** Columns padded to their widest cell. */
-function txt(rows: string[][], title: string, about: string): string {
+function txt({ rows, title, about }: ListDocument): string {
   const widths = FIELDS.map((_, i) =>
     Math.max(...rows.map((r) => (r[i] ?? "").length)),
   );
@@ -83,7 +102,7 @@ function escapeHtml(text: string): string {
 }
 
 /** A standalone page: it opens outside the app, so it carries its own styles. */
-function html(rows: string[][], title: string, about: string): string {
+function html({ rows, title, about }: ListDocument): string {
   const [head = [], ...body] = rows;
   const cells = (r: string[], tag: string) =>
     `<tr>${r.map((t) => `<${tag}>${escapeHtml(t)}</${tag}>`).join("")}</tr>`;
@@ -120,15 +139,13 @@ export function exportContent(
   sizes: Sizes,
   now: Date,
 ): string {
-  const rows = table(programs, sizes);
-  const title = fr.programs.list;
-  const about = summary(programs, sizes, now);
+  const doc = listDocument(programs, sizes, now, fr.programs.export.exportedOn);
   switch (format) {
     case "csv":
-      return csv(rows);
+      return csv(doc.rows);
     case "txt":
-      return txt(rows, title, about);
+      return txt(doc);
     case "html":
-      return html(rows, title, about);
+      return html(doc);
   }
 }

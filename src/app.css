@@ -67,6 +67,11 @@
   --font-size-sm: 13px;
   --font-size-body: 15px;
   --font-size-title: 28px;
+  /* Printed list (F19): black on white, whatever the screen theme. */
+  --print-ink: #000000;
+  --print-paper: #ffffff;
+  --print-rule: #cccccc;
+  --print-font-size: 11px;
   --titlebar-height: 32px;
   /* Windows' caption buttons: 46 px wide, 10 px glyphs. */
   --caption-button-width: 46px;
@@ -99,6 +104,20 @@ body {
   font-size: var(--font-size-body);
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Printing shows only the sheet appended to <body> (PrintSheet.svelte), across
+ * as many pages as it needs. */
+@media print {
+  html,
+  body {
+    height: auto;
+    overflow: visible;
+    background: var(--print-paper);
+  }
+  #app {
+    display: none;
+  }
 }
 
 button,

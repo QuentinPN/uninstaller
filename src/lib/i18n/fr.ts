@@ -49,6 +49,8 @@ export const fr = {
       exportedOn: (date: string) => `exporté le ${date}`,
       saved: (path: string) => `Liste exportée : ${path}`,
       failed: "L'export n'a pas pu être enregistré",
+      print: "Imprimer…",
+      printedOn: (date: string) => `imprimé le ${date}`,
     },
     viewAs: "Vue",
     views: { details: "Détails", icons: "Icônes", list: "Liste" },

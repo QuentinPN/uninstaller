@@ -14,7 +14,13 @@ import EmptyState from "../ui/EmptyState.svelte";
 import { EMPTY_SELECTION, type Selection } from "../ui/listNav";
 import VirtualList from "../ui/VirtualList.svelte";
 import AppIcon from "./AppIcon.svelte";
-import { EXPORT_FORMATS, exportContent } from "./export";
+import {
+  EXPORT_FORMATS,
+  exportContent,
+  type ListDocument,
+  listDocument,
+} from "./export";
+import PrintSheet from "./PrintSheet.svelte";
 import ProgramDetails from "./ProgramDetails.svelte";
 import {
   COLUMNS,
@@ -114,6 +120,20 @@ async function exportAs(format: ExportFormat) {
   else if (result.data)
     exported = { text: t.saved(result.data), failed: false };
 }
+/** The sheet laid out for printing, until the print dialog closes. */
+let printing = $state<ListDocument | null>(null);
+
+/** Prints the list as shown, through the system print dialog. */
+async function print() {
+  printing = listDocument(
+    visible,
+    sizes,
+    new Date(),
+    fr.programs.export.printedOn,
+  );
+  await tick();
+  window.print();
+}
 let detailsOpen = $state(false);
 let list = $state<VirtualList<Program>>();
 
@@ -199,6 +219,8 @@ function onkeydown(event: KeyboardEvent) {
 
 onMount(load);
 </script>
+
+<svelte:window onafterprint={() => (printing = null)} />
 
 <header class="head">
   <h1>{fr.nav.programs}</h1>
@@ -290,6 +312,14 @@ onMount(load);
         {fr.programs.export.formats[format]}
       </button>
     {/each}
+    <button
+      class="menu-item"
+      popovertarget="export-menu"
+      popovertargetaction="hide"
+      onclick={print}
+    >
+      {fr.programs.export.print}
+    </button>
   </div>
   <div class="toggles push" role="group" aria-label={fr.programs.filter}>
     {#each FILTERS as filter (filter)}
@@ -414,6 +444,9 @@ onMount(load);
 {/snippet}
 {#if details}
   <ProgramDetails program={details} diskSizeKib={sizes.get(details.id)} onclose={closeDetails} />
+{/if}
+{#if printing}
+  <PrintSheet doc={printing} />
 {/if}
 </div>
 

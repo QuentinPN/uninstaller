@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { exportContent } from "./export";
+import { exportContent, listDocument } from "./export";
 import { program } from "./fixture";
 
 const NOW = new Date(2026, 10, 9);
@@ -15,6 +15,19 @@ const programs = [
 ];
 const content = (format: "html" | "csv" | "txt") =>
   exportContent(format, programs, new Map(), NOW);
+
+describe("listDocument", () => {
+  it("dates the printed sheet with the given stamp", () => {
+    const doc = listDocument(
+      programs,
+      new Map(),
+      NOW,
+      (d) => `imprimé le ${d}`,
+    );
+    expect(doc.about).toBe("2 programmes · 2 Mo · imprimé le 09/11/2026");
+    expect(doc.rows).toHaveLength(3);
+  });
+});
 
 describe("exportContent", () => {
   it("writes CSV for French spreadsheets, quoted and without formulas", () => {
