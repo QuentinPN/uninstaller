@@ -36,6 +36,11 @@ function onkeydown(event: KeyboardEvent) {
 <main>
   {#if section === "programs"}
     <ProgramsView />
+  {:else if section === "backups"}
+    <!-- Secondary screens load on demand (ARCHITECTURE.md). -->
+    {#await import("./lib/backups/BackupsView.svelte") then { default: BackupsView }}
+      <BackupsView />
+    {/await}
   {:else}
     <h1>{fr.nav[section]}</h1>
     <EmptyState title={fr.upcoming.title} text={fr.upcoming[section]} />

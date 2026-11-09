@@ -1,5 +1,8 @@
 // Every user-facing label lives here (CLAUDE.md): components never hard-code text.
 export const fr = {
+  common: {
+    retry: "Réessayer",
+  },
   window: {
     minimize: "Réduire",
     maximize: "Agrandir",
@@ -104,7 +107,6 @@ export const fr = {
     error: {
       title: "Impossible de lire la liste des programmes",
       text: "Le registre n'a pas pu être lu. Réessayez ; si cela persiste, redémarrez l'application.",
-      retry: "Réessayer",
     },
     details: {
       label: "Détails du programme",
@@ -131,6 +133,30 @@ export const fr = {
       folderMissing: "Ce dossier n'existe plus",
     },
   },
+  backups: {
+    count: (n: number) => `${n} lot${n > 1 ? "s" : ""} en quarantaine`,
+    quarantine: "Quarantaine",
+    /** What a batch still holds: "12 fichiers et dossiers · 3 clés". */
+    contents: (files: number, keys: number) => {
+      const parts = [];
+      if (files)
+        parts.push(
+          `${files} fichier${files > 1 ? "s" : ""} et dossier${files > 1 ? "s" : ""}`,
+        );
+      if (keys) parts.push(`${keys} clé${keys > 1 ? "s" : ""}`);
+      return parts.length ? parts.join(" · ") : "Tout restauré";
+    },
+    purgeOn: (day: string) => `Purge le ${day}`,
+    purging: "Purge en cours",
+    empty: {
+      title: "Rien en quarantaine",
+      text: "Ce qu'un nettoyage retire arrive ici et reste restaurable jusqu'à sa purge.",
+    },
+    error: {
+      title: "Impossible de lire la quarantaine",
+      text: "Le dossier de quarantaine n'a pas pu être lu. Réessayez ; si cela persiste, redémarrez l'application.",
+    },
+  },
   /** Screens not built yet: what will be there, and when. */
   upcoming: {
     title: "Pas encore là",
@@ -138,8 +164,6 @@ export const fr = {
     extensions: "Phase 5 : les extensions de Chrome, Edge, Brave et Firefox.",
     tools:
       "Phase 7 : démarrage, fichiers inutiles, navigateurs, historiques, broyeur et outils Windows.",
-    backups:
-      "Phase 2 : points de restauration, sauvegardes du registre et éléments en quarantaine.",
     tracking:
       "Phase 8 : suivre une installation pour la défaire entièrement plus tard.",
     settings: "Les réglages arrivent avec les fonctions qui en ont besoin.",

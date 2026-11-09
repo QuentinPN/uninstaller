@@ -6,6 +6,10 @@ const shortDate = new Intl.DateTimeFormat("fr-FR", {
   dateStyle: "short",
   timeZone: "UTC",
 });
+const moment = new Intl.DateTimeFormat("fr-FR", {
+  dateStyle: "long",
+  timeStyle: "short",
+});
 const monthYear = new Intl.DateTimeFormat("fr-FR", {
   month: "long",
   year: "numeric",
@@ -33,6 +37,11 @@ export function isoDate(date: Date): string {
 /** `yyyy-mm-dd` to "15/03/2024". */
 export function formatDate(iso: string): string {
   return shortDate.format(new Date(`${iso}T00:00:00Z`));
+}
+
+/** Seconds since the Unix epoch to the local "9 novembre 2026 à 14:32". */
+export function formatMoment(secs: number): string {
+  return moment.format(new Date(secs * 1000));
 }
 
 /** `yyyy-mm` to "Mars 2024", capitalized to stand as a heading. */

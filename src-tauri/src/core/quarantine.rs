@@ -11,9 +11,11 @@ use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use specta::Type;
 
 use super::protect;
 use super::registry::reg_file;
+use super::sizes;
 use crate::win::registry::{self, Hive, View};
 
 const MANIFEST: &str = "manifest.json";
@@ -21,6 +23,9 @@ const MANIFEST: &str = "manifest.json";
 const MANIFEST_NEXT: &str = "manifest.json.next";
 /// Where moved items are kept, one entry per item, named by its index.
 const STORE: &str = "items";
+/// How long a batch stays restorable before it is purged (SECURITY.md: default 14
+/// days, a setting later).
+pub const PURGE_DELAY: Duration = Duration::from_secs(14 * 24 * 3600);
 
 #[derive(Debug)]
 pub enum Error {
@@ -117,6 +122,24 @@ struct Manifest {
     items: Vec<Item>,
 }
 
+/// What the Backups screen shows of a batch. Times are seconds since the Unix epoch.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchSummary {
+    /// The batch folder's name.
+    pub name: String,
+    pub created: u32,
+    /// When it is due to be purged (`created` + `PURGE_DELAY`).
+    pub purge_on: u32,
+    /// Files, folders and links not restored.
+    pub files: u32,
+    /// Registry keys not restored.
+    pub keys: u32,
+    /// What its kept items take on disk.
+    pub size_kib: u32,
+    pub purging: bool,
+}
+
 /// One cleanup's quarantine folder and its manifest.
 pub struct Batch {
     dir: PathBuf,
@@ -162,6 +185,27 @@ impl Batch {
 
     pub fn items(&self) -> &[Item] {
         &self.items
+    }
+
+    pub fn summary(&self) -> BatchSummary {
+        let left = || self.items.iter().filter(|i| i.state != State::Restored);
+        let keys = left().filter(|i| i.kind == Kind::Key).count();
+        let files = left().count() - keys;
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        let secs = |s: u64| u32::try_from(s).unwrap_or(u32::MAX);
+        BatchSummary {
+            name: self
+                .dir
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            created: secs(self.created),
+            purge_on: secs(self.created.saturating_add(PURGE_DELAY.as_secs())),
+            files: count(files),
+            keys: count(keys),
+            size_kib: sizes::kib(sizes::folder_bytes(&self.dir.join(STORE))),
+            purging: self.state == BatchState::Purging,
+        }
     }
 
     /// Moves `path` into the batch. The manifest names it `Pending` before the move
@@ -390,27 +434,40 @@ pub fn root() -> Option<PathBuf> {
 /// At startup: resumes every batch under `root`. A batch that cannot be read is left
 /// as it is, for the Backups screen to show; returns how many were resumed.
 pub fn resume_all(root: &Path) -> usize {
-    let Ok(entries) = fs::read_dir(root) else {
-        return 0;
-    };
-    entries
-        .flatten()
-        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
-        .filter(|entry| {
-            Batch::open(&entry.path())
+    batch_dirs(root)
+        .filter(|dir| {
+            Batch::open(dir)
                 .and_then(|mut batch| batch.resume())
                 .is_ok()
         })
         .count()
 }
 
+/// Every batch under `root` that can be read, newest first.
+pub fn list(root: &Path) -> Vec<BatchSummary> {
+    let mut batches: Vec<_> = batch_dirs(root)
+        .filter_map(|dir| Batch::open(&dir).ok())
+        .map(|batch| batch.summary())
+        .collect();
+    batches.sort_by(|a, b| b.created.cmp(&a.created).then_with(|| a.name.cmp(&b.name)));
+    batches
+}
+
+/// The folders under `root`, each a batch or what is left of one; none if `root`
+/// cannot be read.
+fn batch_dirs(root: &Path) -> impl Iterator<Item = PathBuf> {
+    fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|entry| entry.path())
+}
+
 /// Purges every batch under `root` created at least `delay` before `now`, and any
 /// `Purging` one. A batch that cannot be read is left for the Backups screen; returns
 /// how many were purged.
 pub fn purge_expired(root: &Path, delay: Duration, now: SystemTime) -> usize {
-    let Ok(entries) = fs::read_dir(root) else {
-        return 0;
-    };
     let Some(limit) = now
         .duration_since(SystemTime::UNIX_EPOCH)
         .ok()
@@ -418,10 +475,8 @@ pub fn purge_expired(root: &Path, delay: Duration, now: SystemTime) -> usize {
     else {
         return 0;
     };
-    entries
-        .flatten()
-        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
-        .filter_map(|entry| Batch::open(&entry.path()).ok())
+    batch_dirs(root)
+        .filter_map(|dir| Batch::open(&dir).ok())
         .filter(|batch| batch.state == BatchState::Purging || batch.created <= limit.as_secs())
         .map(Batch::purge)
         .filter(Result::is_ok)
@@ -569,8 +624,6 @@ mod tests {
         dir
     }
 
-    const FOURTEEN_DAYS: Duration = Duration::from_secs(14 * 24 * 3600);
-
     #[test]
     fn purges_only_expired_batches() {
         let dir = sandbox("purge");
@@ -581,14 +634,27 @@ mod tests {
         fs::write(dir.join("target\\kept.txt"), b"kept").unwrap();
         junction(&dir.join("app\\link"), &dir.join("target"));
         old.quarantine(&dir.join("app\\link")).unwrap();
-        old.created -= FOURTEEN_DAYS.as_secs();
+        old.created -= PURGE_DELAY.as_secs();
         old.save().unwrap();
         let mut recent = Batch::create(&root, "recent").unwrap();
         recent.quarantine(&dir.join("app\\data")).unwrap();
         fs::create_dir(root.join("damaged")).unwrap();
         fs::write(root.join("damaged\\manifest.json"), b"{").unwrap();
 
-        assert_eq!(purge_expired(&root, FOURTEEN_DAYS, SystemTime::now()), 1);
+        let listed = list(&root);
+        assert_eq!(
+            listed.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
+            ["recent", "old"]
+        );
+        assert_eq!((listed[1].files, listed[1].keys), (2, 0));
+        assert_eq!(listed[1].size_kib, 1);
+        assert_eq!(
+            u64::from(listed[1].purge_on),
+            u64::from(listed[1].created) + PURGE_DELAY.as_secs()
+        );
+        assert_eq!((listed[0].files, listed[0].size_kib), (1, 1));
+
+        assert_eq!(purge_expired(&root, PURGE_DELAY, SystemTime::now()), 1);
         assert!(!root.join("old").exists());
         assert!(!dir.join("app\\app.exe").exists());
         assert_eq!(fs::read(dir.join("target\\kept.txt")).unwrap(), b"kept");

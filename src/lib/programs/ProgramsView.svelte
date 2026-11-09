@@ -347,9 +347,7 @@ onMount(load);
 <div class="body" {onkeydown}>
 <div class="content">
 {#if failed}
-  <EmptyState title={fr.programs.error.title} text={fr.programs.error.text}>
-    <button class="retry" onclick={load}>{fr.programs.error.retry}</button>
-  </EmptyState>
+  <EmptyState title={fr.programs.error.title} text={fr.programs.error.text} onretry={load} />
 {:else if !programs}
   <div class="skeleton" aria-busy="true">
     {#each { length: SKELETON_ROWS }, i (i)}
@@ -544,14 +542,6 @@ onMount(load);
   .toggle[aria-pressed="true"] {
     background: var(--color-primary);
     color: var(--color-on-primary);
-  }
-  .retry {
-    padding: var(--space-2) var(--space-4);
-    border: none;
-    border-radius: var(--radius-pill);
-    background: var(--color-primary);
-    color: var(--color-on-primary);
-    cursor: pointer;
   }
   .list-host {
     display: flex;

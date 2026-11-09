@@ -1,20 +1,22 @@
 <script lang="ts">
-import type { Snippet } from "svelte";
+import { fr } from "../i18n/fr";
 
 interface Props {
   title: string;
   text: string;
-  /** Optional action under the text, such as "Réessayer". */
-  children?: Snippet;
+  /** For an error: shows "Réessayer" under the text. */
+  onretry?: () => void;
 }
 
-let { title, text, children }: Props = $props();
+let { title, text, onretry }: Props = $props();
 </script>
 
 <div class="empty">
   <p class="title">{title}</p>
   <p class="text">{text}</p>
-  {@render children?.()}
+  {#if onretry}
+    <button class="retry" onclick={onretry}>{fr.common.retry}</button>
+  {/if}
 </div>
 
 <style>
@@ -31,5 +33,13 @@ let { title, text, children }: Props = $props();
     margin: 0 0 var(--space-4);
     color: var(--color-text-secondary);
     line-height: 1.5;
+  }
+  .retry {
+    padding: var(--space-2) var(--space-4);
+    border: none;
+    border-radius: var(--radius-pill);
+    background: var(--color-primary);
+    color: var(--color-on-primary);
+    cursor: pointer;
   }
 </style>

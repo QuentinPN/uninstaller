@@ -18,6 +18,11 @@ export const commands = {
 	 */
 	listShown: (pageMs: number) => __TAURI_INVOKE<void>("list_shown", { pageMs }),
 	/**
+	 *  The quarantine batches, newest first (Backups screen); none if the folder does not
+	 *  exist yet.
+	 */
+	listQuarantine: () => __TAURI_INVOKE<BatchSummary[]>("list_quarantine"),
+	/**
 	 *  Size on disk of every program with an install folder, sent in batches on `on_sizes`
 	 *  as folders finish (F1). Resolves once all are sent.
 	 */
@@ -39,6 +44,22 @@ export const commands = {
 export type AppInfo = {
 	/**  Running with an administrator token (ADR 0002: normally false). */
 	elevated: boolean,
+};
+
+/**  What the Backups screen shows of a batch. Times are seconds since the Unix epoch. */
+export type BatchSummary = {
+	/**  The batch folder's name. */
+	name: string,
+	created: number,
+	/**  When it is due to be purged (`created` + `PURGE_DELAY`). */
+	purgeOn: number,
+	/**  Files, folders and links not restored. */
+	files: number,
+	/**  Registry keys not restored. */
+	keys: number,
+	/**  What its kept items take on disk. */
+	sizeKib: number,
+	purging: boolean,
 };
 
 /**

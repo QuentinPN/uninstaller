@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::ipc::Channel;
 
 use crate::core::inventory::{self, Program};
+use crate::core::quarantine::{self, BatchSummary};
 use crate::core::sizes::{self, ProgramSize};
 use crate::win::dialog::{self, SaveAs};
 
@@ -42,6 +43,16 @@ pub async fn list_programs() -> Vec<Program> {
     prefetched
         .and_then(|scan| scan.join().ok())
         .unwrap_or_else(inventory::scan)
+}
+
+/// The quarantine batches, newest first (Backups screen); none if the folder does not
+/// exist yet.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_quarantine() -> Vec<BatchSummary> {
+    quarantine::root()
+        .map(|root| quarantine::list(&root))
+        .unwrap_or_default()
 }
 
 /// Names the file where `list_shown` notes the time; set only by

@@ -61,7 +61,7 @@ pub fn compute(programs: &[Program], mut send: impl FnMut(Vec<ProgramSize>)) {
         loop {
             let finished = match results.recv_timeout(BATCH_EVERY) {
                 Ok((ids, bytes)) => {
-                    let size_kib = u32::try_from(bytes.div_ceil(1024)).unwrap_or(u32::MAX);
+                    let size_kib = kib(bytes);
                     batch.extend(ids.iter().map(|id| ProgramSize {
                         id: id.clone(),
                         size_kib,
@@ -82,9 +82,14 @@ pub fn compute(programs: &[Program], mut send: impl FnMut(Vec<ProgramSize>)) {
     });
 }
 
+/// Bytes as KiB, rounded up, the unit sizes cross the IPC in.
+pub fn kib(bytes: u64) -> u32 {
+    u32::try_from(bytes.div_ceil(1024)).unwrap_or(u32::MAX)
+}
+
 /// Bytes of every file under `folder`. Junctions and symbolic links are not followed
 /// (they may point outside the program, or loop); unreadable entries count as zero.
-fn folder_bytes(folder: &Path) -> u64 {
+pub fn folder_bytes(folder: &Path) -> u64 {
     let mut total = 0;
     let mut pending = vec![folder.to_path_buf()];
     while let Some(dir) = pending.pop() {
