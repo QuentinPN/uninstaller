@@ -4,7 +4,8 @@
 //! the quarantine moves. Every folder passes `protect::is_protected`, every key
 //! `protect::is_protected_key`, every task `protect::is_protected_task`; links and
 //! junctions are never listed nor followed. `clean` hands the folders, shortcuts and
-//! keys the user picked to the quarantine, which checks `protect` again.
+//! keys the user picked to the quarantine, which checks `protect` again; `clean_held`
+//! is the elevated broker's half, for what needed administrator rights.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -164,7 +165,7 @@ pub struct Pick {
 }
 
 /// What became of the picked items.
-#[derive(Debug, Default, PartialEq, Serialize, Type)]
+#[derive(Debug, Default, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Cleaned {
     /// The quarantine batch they went into; none when nothing moved.
@@ -176,6 +177,14 @@ pub struct Cleaned {
     pub failed: u32,
 }
 
+/// An item left in place for want of rights, named by value for the elevated broker,
+/// which moves it only if its own scan of the program lists it too.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Held {
+    Path(PathBuf),
+    Key(String),
+}
+
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 enum Item<'a> {
     Path(&'a Path),
@@ -183,6 +192,13 @@ enum Item<'a> {
 }
 
 impl Item<'_> {
+    fn held(&self) -> Held {
+        match self {
+            Item::Path(path) => Held::Path(path.to_path_buf()),
+            Item::Key(key) => Held::Key((*key).to_owned()),
+        }
+    }
+
     fn depth(&self) -> usize {
         match self {
             Item::Path(path) => path.components().count(),
@@ -204,24 +220,60 @@ impl Item<'_> {
 }
 
 /// Moves the `picks` of `found` into a new quarantine batch under `root`, named after
-/// `label`. Parents go before what they hold, which then counts as moved with them.
-/// An empty batch is removed again.
+/// `label`. Also returns what needed administrator rights, for `clean_held`.
 pub fn clean(
     found: &Found,
     picks: &[Pick],
     root: &Path,
     label: &str,
-) -> Result<Cleaned, quarantine::Error> {
-    let mut cleaned = Cleaned::default();
-    let mut items = Vec::new();
-    for pick in picks {
+) -> Result<(Cleaned, Vec<Held>), quarantine::Error> {
+    let items = picks.iter().map(|pick| {
         let index = pick.index as usize;
-        let item = match pick.list {
+        match pick.list {
             List::Folders => found.folders.get(index).map(|f| Item::Path(&f.path)),
             List::Shortcuts => found.shortcuts.get(index).map(|s| Item::Path(&s.path)),
             List::Keys => found.keys.get(index).map(|k| Item::Key(&k.name)),
             List::Services | List::Tasks => None,
-        };
+        }
+    });
+    quarantine_items(items, root, label)
+}
+
+/// The elevated broker's half of `clean`: moves the `held` items that `found`, the
+/// broker's own scan, lists too; any other counts as failed.
+pub fn clean_held(
+    found: &Found,
+    held: &[Held],
+    root: &Path,
+    label: &str,
+) -> Result<Cleaned, quarantine::Error> {
+    let items = held.iter().map(|held| match held {
+        Held::Path(path) => found
+            .folders
+            .iter()
+            .chain(&found.shortcuts)
+            .find(|leftover| &leftover.path == path)
+            .map(|leftover| Item::Path(&leftover.path)),
+        Held::Key(key) => found
+            .keys
+            .iter()
+            .find(|named| &named.name == key)
+            .map(|named| Item::Key(&named.name)),
+    });
+    Ok(quarantine_items(items, root, label)?.0)
+}
+
+/// Moves `items` into a new batch, `None` ones counting as failed. Parents go before
+/// what they hold, which then counts as moved with them. An empty batch is removed.
+fn quarantine_items<'a>(
+    resolved: impl Iterator<Item = Option<Item<'a>>>,
+    root: &Path,
+    label: &str,
+) -> Result<(Cleaned, Vec<Held>), quarantine::Error> {
+    let mut cleaned = Cleaned::default();
+    let mut held = Vec::new();
+    let mut items = Vec::new();
+    for item in resolved {
         match item {
             Some(item) => items.push(item),
             None => cleaned.failed += 1,
@@ -247,7 +299,10 @@ pub fn clean(
                 cleaned.moved += 1;
                 moved.push(item);
             }
-            Err(error) if quarantine::needs_admin(&error) => cleaned.needs_admin += 1,
+            Err(error) if quarantine::needs_admin(&error) => {
+                cleaned.needs_admin += 1;
+                held.push(item.held());
+            }
             Err(_) => cleaned.failed += 1,
         }
     }
@@ -256,7 +311,7 @@ pub fn clean(
     } else {
         cleaned.batch = Some(batch.name());
     }
-    Ok(cleaned)
+    Ok((cleaned, held))
 }
 
 impl Target {
@@ -1105,7 +1160,8 @@ mod tests {
             pick(List::Services, 0),
         ];
         let root = dir.join("quarantine");
-        let cleaned = clean(&found, &picks, &root, "Widget: Pro").unwrap();
+        let (cleaned, held) = clean(&found, &picks, &root, "Widget: Pro").unwrap();
+        assert!(held.is_empty());
         assert_eq!(
             cleaned,
             Cleaned {
@@ -1127,9 +1183,22 @@ mod tests {
                 .unwrap()
         );
         batch.purge().unwrap();
+        // The broker's half takes only what its own scan lists.
+        let held = [
+            Held::Path(dir.join("Widget")),
+            Held::Key(key.clone()),
+            Held::Path(dir.join("Other")),
+            Held::Key(r"HKEY_CURRENT_USER\Software\Other".into()),
+        ];
+        let cleaned = clean_held(&found, &held, &root, "Widget").unwrap();
+        assert_eq!((cleaned.moved, cleaned.failed), (2, 2));
+        assert!(!dir.join("Widget").exists() && dir.join("Widget.lnk").exists());
+        let mut batch = quarantine::Batch::open(&root.join("Widget")).unwrap();
+        batch.restore().unwrap();
+        batch.purge().unwrap();
         registry::test_key::clear(&path);
         // Nothing to move: no batch is left behind.
-        let none = clean(&found, &[pick(List::Services, 0)], &root, "Widget").unwrap();
+        let (none, _) = clean(&found, &[pick(List::Services, 0)], &root, "Widget").unwrap();
         assert_eq!(none.batch, None);
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
         fs::remove_dir_all(&dir).unwrap();

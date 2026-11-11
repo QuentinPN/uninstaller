@@ -8,9 +8,12 @@ use specta::Type;
 use std::fs::File;
 use std::hash::{BuildHasher, RandomState};
 use std::io::{self, ErrorKind, Read, Write};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use crate::core::inventory;
+use crate::core::leftovers::{self, Cleaned, Held};
 use crate::core::quarantine::{self, BatchAction, BatchFailure};
 use crate::core::registry::paths::SYSTEM_RESTORE;
 use crate::win::process::{self, Process};
@@ -21,8 +24,9 @@ use crate::win::{pipe, restore, token};
 /// mismatch means something else is on the pipe.
 pub const VERSION: u32 = 1;
 
-/// Largest frame accepted, checked before anything is allocated.
-const MAX_FRAME: u32 = 64 * 1024;
+/// Largest frame accepted, checked before anything is allocated. Room for a
+/// `Request::Leftovers` of a few thousand long paths.
+const MAX_FRAME: u32 = 1024 * 1024;
 
 /// The broker quits after this long without a request (ADR 0002).
 const IDLE: Duration = Duration::from_secs(5 * 60);
@@ -41,6 +45,9 @@ pub enum Request {
     ListRestorePoints,
     /// Opens Windows' System Restore wizard, where the user picks a point.
     OpenSystemRestore,
+    /// Moves the leftovers of `program` (an inventory id) that the app was denied. The
+    /// broker scans the program again and takes only the `held` items it finds too.
+    Leftovers { program: String, held: Vec<Held> },
 }
 
 /// The broker's answer to one `Request`.
@@ -55,6 +62,8 @@ pub enum Reply {
     /// Newest first; `None` if Windows could not list them.
     RestorePoints(Option<Vec<SystemPoint>>),
     Opened(bool),
+    /// `None` if the program or the quarantine folder was not found.
+    Cleaned(Option<Cleaned>),
 }
 
 /// A restore point in the Backups timeline.
@@ -195,7 +204,15 @@ fn answer(request: Request) -> Reply {
         ),
         Request::ListRestorePoints => Reply::RestorePoints(restore_points()),
         Request::OpenSystemRestore => Reply::Opened(open_system_restore()),
+        Request::Leftovers { program, held } => Reply::Cleaned(clean_held(&program, &held)),
     }
+}
+
+/// Scans the program `id` again, elevated, and moves the `held` items it lists too.
+fn clean_held(id: &str, held: &[Held]) -> Option<Cleaned> {
+    let program = inventory::find(id)?;
+    let found = leftovers::find(&program, &inventory::scan(), &AtomicBool::new(false))?;
+    leftovers::clean_held(&found, held, &quarantine::root()?, &program.name).ok()
 }
 
 /// The points WMI lists, newest first; a point whose date cannot be read is left out.
@@ -397,6 +414,43 @@ mod tests {
         let mut from = Cursor::new(bytes);
         assert_eq!(receive(&mut from).expect("ping"), Some(Request::Ping));
         assert_eq!(receive::<Request>(&mut from).expect("end"), None);
+    }
+
+    #[test]
+    fn many_held_leftovers_fit_in_a_frame() {
+        let held: Vec<Held> = (0..2000)
+            .map(|i| {
+                Held::Path(format!(r"C:\Program Files\{}\{i}", "Vendor Name ".repeat(12)).into())
+            })
+            .chain((0..1000).map(|i| {
+                Held::Key(format!(
+                    r"HKEY_LOCAL_MACHINE\SOFTWARE\{}\{i}",
+                    "Vendor ".repeat(12)
+                ))
+            }))
+            .collect();
+        let request = Request::Leftovers {
+            program: "id".into(),
+            held,
+        };
+        let mut bytes = Vec::new();
+        send(&mut bytes, &request).expect("send");
+        assert_eq!(
+            receive(&mut Cursor::new(bytes)).expect("receive"),
+            Some(request)
+        );
+        let reply = Reply::Cleaned(Some(Cleaned {
+            batch: Some("Widget".into()),
+            moved: 2,
+            needs_admin: 0,
+            failed: 1,
+        }));
+        let mut bytes = Vec::new();
+        send(&mut bytes, &reply).expect("send");
+        assert_eq!(
+            receive(&mut Cursor::new(bytes)).expect("receive"),
+            Some(reply)
+        );
     }
 
     #[test]

@@ -25,4 +25,5 @@ Lire l'inventaire, chercher et exporter ne demandent aucun droit. Désinstaller,
 ## Conséquences
 
 - Deux modes dans le même binaire : le point d'entrée analyse les arguments avant de lancer Tauri.
+- Restes refusés faute de droits (2026-11-11) : `Request::Leftovers` porte l'identifiant du programme et les éléments par valeur (chemins, clés), venus du scan de l'application et jamais de l'UI. Le courtier ne s'y fie pas : il refait le scan du programme et ne prend que les éléments que son propre scan liste, chacun passant ensuite par `protect` et la quarantaine. Les indices ne suffiraient pas : la première passe, non élevée, a déjà déplacé une partie des éléments.
 - Les tests du protocole tournent sans élévation (tube local, broker simulé) ; les tests de bout en bout du broker sont marqués « administrateur » et exécutés en local depuis une console administrateur ou dans la VM.

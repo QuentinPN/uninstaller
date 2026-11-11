@@ -2,6 +2,7 @@
 import { onMount } from "svelte";
 import { fr } from "../i18n/fr";
 import {
+  type Cleaned,
   commands,
   type Found,
   type LeftoverFailure,
@@ -43,6 +44,8 @@ let tab = $state<Tab>("files");
 let selected = $state<Set<string>>(new Set());
 let confirming = $state(false);
 let cleaning = $state(false);
+/** Items the last quarantine left for want of rights, which the broker may take. */
+let held = $state(0);
 let notice = $state<{ text: string; failed: boolean } | null>(null);
 /** Answers of an earlier scan (retried, or left) are ignored. */
 let run = 0;
@@ -93,12 +96,33 @@ async function quarantine() {
   if (current !== run) return;
   cleaning = false;
   if (result.status === "ok") {
-    const { moved, needsAdmin, failed } = result.data;
-    notice = { text: t.cleaned(moved, needsAdmin, failed), failed: failed > 0 };
+    held = result.data.needsAdmin;
+    notice = outcome(result.data);
   } else {
     notice = { text: t.cleanFailure[result.error], failed: true };
   }
   start();
+}
+
+/** Hands what needed rights to the elevated broker (UAC prompt), then scans again. */
+async function elevate() {
+  cleaning = true;
+  notice = { text: t.elevating, failed: false };
+  const current = run;
+  const result = await commands.quarantineHeldLeftovers().catch(failedCall);
+  if (current !== run) return;
+  cleaning = false;
+  if (result.status === "ok") {
+    held = 0;
+    notice = outcome(result.data);
+  } else {
+    notice = { text: t.elevation[result.error], failed: true };
+  }
+  start();
+}
+
+function outcome({ moved, needsAdmin, failed }: Cleaned) {
+  return { text: t.cleaned(moved, needsAdmin, failed), failed: failed > 0 };
 }
 
 function onkeydown(event: KeyboardEvent) {
@@ -132,6 +156,9 @@ onMount(() => {
     <p class="summary notice" class:failed={notice.failed} role="status">
       {notice.text}
     </p>
+  {/if}
+  {#if held && !cleaning}
+    <button class="action elevate" onclick={elevate}>{t.elevate}</button>
   {/if}
 </header>
 
@@ -243,14 +270,20 @@ onMount(() => {
   .back:active {
     background: var(--fill-pressed);
   }
-  .notice {
-    flex: 1;
+  .elevate {
+    flex: none;
+    align-self: center;
   }
   .summary {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* After `.summary`: the outcome wraps rather than being cut. */
+  .notice {
+    flex: 1;
+    white-space: normal;
   }
   .chosen {
     margin-left: auto;

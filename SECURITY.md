@@ -11,7 +11,7 @@
 
 ## Surface d'attaque
 
-- WebView jamais élevée ; broker élevé avec liste fermée d'opérations, entrées validées, identifiants opaques (pas de chemins libres venant de l'UI).
+- WebView jamais élevée ; broker élevé avec liste fermée d'opérations, entrées validées, identifiants opaques (pas de chemins libres venant de l'UI). Seule exception, les restes refusés faute de droits : leurs chemins viennent du scan de l'application, et le broker ne prend que ceux que son propre scan du programme retrouve (ADR 0002).
 - CSP stricte : `default-src 'self'`, pas de contenu distant, `connect-src ipc:`, `img-src 'self' http://icon.localhost` (schéma d'icônes local, lecture seule, ADR 0004) ; aucune requête réseau sauf « Chercher en ligne » qui ouvre le navigateur par défaut.
 - Capacités Tauri minimales (événements, fenêtre). Aucun plugin shell / fs générique.
 - Seule écriture de fichier demandée par l'UI : l'export (F19, `save_export`). Le chemin vient uniquement de la boîte « Enregistrer sous » de Windows (`win/dialog.rs`, confirmation d'écrasement), jamais de l'UI ; le contenu est du texte. Le CSV neutralise les cellules commençant par `= + - @` (injection de formules), le HTML échappe tout texte. Seule autre écriture : `list_shown` ajoute un horodatage au fichier nommé par la variable d'environnement `UNINSTALLER_PERF_LOG`, posée par celui qui lance l'application (`scripts/measure-startup.ps1`) ; la commande ne prend aucun argument de la page et ne fait rien sans cette variable.

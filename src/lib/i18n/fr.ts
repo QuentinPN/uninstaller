@@ -233,7 +233,7 @@ export const fr = {
       `${n} élément${n > 1 ? "s" : ""} sélectionné${n > 1 ? "s" : ""}`,
     tabEmpty: "Rien dans cet onglet.",
     /** Services and tasks: listed, not yet removable. */
-    later: "Leur retrait arrive avec l'élévation",
+    later: "Retrait pas encore pris en charge",
     quarantine: "Mettre en quarantaine",
     confirm: (n: number) =>
       `${n} élément${n > 1 ? "s" : ""} ${n > 1 ? "seront déplacés" : "sera déplacé"} en quarantaine. Vous pourrez ${n > 1 ? "les" : "le"} restaurer depuis Sauvegardes.`,
@@ -249,6 +249,16 @@ export const fr = {
       ]
         .filter(Boolean)
         .join(" · "),
+    /** What the last quarantine left for want of rights: through the broker. */
+    elevate: "Continuer en administrateur",
+    elevating: "Mise en quarantaine en administrateur…",
+    /** By `ElevationFailure`. */
+    elevation: {
+      refused:
+        "Droits d'administrateur refusés : ces éléments restent en place.",
+      failed:
+        "La mise en quarantaine en administrateur a échoué. La liste a été relue.",
+    },
     /** By `CleanFailure`; nothing moved in either case. */
     cleanFailure: {
       stale: "La liste avait changé : elle a été relue, rien n'a été déplacé.",

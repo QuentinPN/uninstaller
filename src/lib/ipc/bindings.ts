@@ -69,6 +69,12 @@ export const commands = {
 	 */
 	quarantineLeftovers: (serial: number, picks: Pick[]) => typedError<Cleaned_Serialize, CleanFailure>(__TAURI_INVOKE("quarantine_leftovers", { serial, picks })),
 	/**
+	 *  Moves what the last `quarantine_leftovers` counted `needsAdmin`, through the
+	 *  elevated broker (UAC prompt), which scans the program again and takes only what
+	 *  it finds too. Kept for another try until the broker has answered.
+	 */
+	quarantineHeldLeftovers: () => typedError<Cleaned_Serialize, ElevationFailure>(__TAURI_INVOKE("quarantine_held_leftovers")),
+	/**
 	 *  Opens a program's install folder in Explorer. Takes the opaque id, never a path:
 	 *  the folder is read back from the registry. False if it no longer exists.
 	 */

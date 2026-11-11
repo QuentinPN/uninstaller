@@ -13,7 +13,7 @@ use tauri::ipc::Channel;
 
 use crate::core::broker::{Client, Reply, Request, RestorePoint, SystemPoint};
 use crate::core::inventory::{self, Program};
-use crate::core::leftovers::{self, Cleaned, Found, Pick};
+use crate::core::leftovers::{self, Cleaned, Found, Held, Pick};
 use crate::core::quarantine::{self, BatchAction, BatchFailure, BatchSummary};
 use crate::core::settings::{self, Settings};
 use crate::core::sizes::{self, ProgramSize};
@@ -266,8 +266,20 @@ static LEFTOVER_SCAN: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
 static LAST_LEFTOVERS: Mutex<Option<Scanned>> = Mutex::new(None);
 static SCAN_SERIAL: AtomicU32 = AtomicU32::new(0);
 
+/// What the last `quarantine_leftovers` left for want of rights, for
+/// `quarantine_held_leftovers`.
+static HELD_LEFTOVERS: Mutex<Option<Pending>> = Mutex::new(None);
+
+#[derive(Clone, PartialEq)]
+struct Pending {
+    /// The program's inventory id: the broker scans it again.
+    program: String,
+    held: Vec<Held>,
+}
+
 struct Scanned {
     serial: u32,
+    program: String,
     /// The program's name, which names the quarantine batch.
     label: String,
     found: Found,
@@ -310,6 +322,7 @@ pub async fn scan_leftovers(id: String) -> Result<Scan, LeftoverFailure> {
         let serial = SCAN_SERIAL.fetch_add(1, Ordering::Relaxed) + 1;
         *last = Some(Scanned {
             serial,
+            program: id,
             label: program.name,
             found: found.clone(),
         });
@@ -346,11 +359,46 @@ pub async fn quarantine_leftovers(serial: u32, picks: Vec<Pick>) -> Result<Clean
     tauri::async_runtime::spawn_blocking(move || {
         let scanned = take_scan(serial).ok_or(CleanFailure::Stale)?;
         let root = quarantine::root().ok_or(CleanFailure::Failed)?;
-        leftovers::clean(&scanned.found, &picks, &root, &scanned.label)
-            .map_err(|_| CleanFailure::Failed)
+        let (cleaned, held) = leftovers::clean(&scanned.found, &picks, &root, &scanned.label)
+            .map_err(|_| CleanFailure::Failed)?;
+        *held_leftovers() = (!held.is_empty()).then_some(Pending {
+            program: scanned.program,
+            held,
+        });
+        Ok(cleaned)
     })
     .await
     .unwrap_or(Err(CleanFailure::Failed))
+}
+
+/// Moves what the last `quarantine_leftovers` counted `needsAdmin`, through the
+/// elevated broker (UAC prompt), which scans the program again and takes only what
+/// it finds too. Kept for another try until the broker has answered.
+#[tauri::command]
+#[specta::specta]
+pub async fn quarantine_held_leftovers() -> Result<Cleaned, ElevationFailure> {
+    let pending = held_leftovers().clone().ok_or(ElevationFailure::Failed)?;
+    let request = Request::Leftovers {
+        program: pending.program.clone(),
+        held: pending.held.clone(),
+    };
+    let cleaned = ask_broker(request, |reply| match reply {
+        Reply::Cleaned(cleaned) => cleaned,
+        _ => None,
+    })
+    .await?;
+    // A quarantine done meanwhile may have left newer items: keep those.
+    let mut held = held_leftovers();
+    if held.as_ref() == Some(&pending) {
+        *held = None;
+    }
+    Ok(cleaned)
+}
+
+fn held_leftovers() -> std::sync::MutexGuard<'static, Option<Pending>> {
+    HELD_LEFTOVERS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
 }
 
 /// The last scan, taken out, if it is the scan `serial`.
@@ -471,6 +519,7 @@ mod tests {
         };
         *last_leftovers() = Some(Scanned {
             serial: 7,
+            program: "id".into(),
             label: "Widget".into(),
             found: found(),
         });
