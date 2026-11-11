@@ -1384,7 +1384,7 @@ mod tests {
             .into_iter()
             .find(|p| p.name == NAME)
             .expect("listed once installed");
-        let ran = crate::core::uninstall::run(&program, &AtomicBool::new(false)).unwrap();
+        let ran = crate::core::uninstall::run(&program, false, &AtomicBool::new(false)).unwrap();
         assert_eq!(
             (ran.exit_code, ran.finished, ran.still_listed),
             (Some(0), true, false)

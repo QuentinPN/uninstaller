@@ -378,12 +378,13 @@ pub fn cancel_leftovers() {
     raise_flag(&LEFTOVER_SCAN);
 }
 
-/// Runs the uninstaller of the program `id` names (F4, step 2) and answers once it and
-/// all it started have ended, or `stop_uninstaller` was called. Starting another stops
-/// the wait for the previous one, which keeps running.
+/// Runs the uninstaller of the program `id` names (F4, step 2), without windows when
+/// `silent` and its installer allows it (F7), and answers once it and all it started
+/// have ended, or `stop_uninstaller` was called. Starting another stops the wait for
+/// the previous one, which keeps running.
 #[tauri::command]
 #[specta::specta]
-pub async fn run_uninstaller(id: String) -> Result<Uninstalled, UninstallFailure> {
+pub async fn run_uninstaller(id: String, silent: bool) -> Result<Uninstalled, UninstallFailure> {
     let stop = fresh_flag(&UNINSTALL_WAIT);
     tauri::async_runtime::spawn_blocking(move || {
         let program = inventory::find(&id).ok_or(UninstallFailure::NotFound)?;
@@ -393,7 +394,7 @@ pub async fn run_uninstaller(id: String) -> Result<Uninstalled, UninstallFailure
         running_broker(&Request::Remember {
             program: id.clone(),
         });
-        uninstall::run(&program, &stop)
+        uninstall::run(&program, silent, &stop)
     })
     .await
     .unwrap_or(Err(UninstallFailure::Failed))

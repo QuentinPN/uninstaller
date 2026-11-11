@@ -35,6 +35,10 @@ type Stage =
 
 let stage = $state<Stage>({ state: "confirm" });
 let withPoint = $state(true);
+/** Without the uninstallers' windows where the installer allows it: on for a batch,
+ * which then runs unattended; one program keeps its uninstaller's options. */
+// svelte-ignore state_referenced_locally
+let silent = $state(programs.length > 1);
 /** By index in `programs`, as each uninstaller ends. */
 let outcomes = $state<Outcome[]>([]);
 /** The batch stops once the running uninstaller ends. */
@@ -92,7 +96,9 @@ async function runQueue() {
 }
 
 async function uninstall(program: Program): Promise<Outcome> {
-  const result = await commands.runUninstaller(program.id).catch(failedCall);
+  const result = await commands
+    .runUninstaller(program.id, silent)
+    .catch(failedCall);
   if (result.status === "error") return result.error;
   ran = true;
   const { finished, stillListed } = result.data;
@@ -160,6 +166,10 @@ $effect(() => {
         <input type="checkbox" bind:checked={withPoint} />
         {t.withPoint}
       </label>
+      <label class="check">
+        <input type="checkbox" bind:checked={silent} />
+        {t.silent}
+      </label>
     {:else if stage.state === "point"}
       <p>{fr.backups.creatingPoint}</p>
       <p class="hint">{t.pointHint}</p>
@@ -172,7 +182,7 @@ $effect(() => {
           {t.progress(stage.index + 1, programs.length, programs[stage.index]?.name ?? "")}
         </p>
       {/if}
-      <p>{t.running}</p>
+      <p>{silent ? t.runningSilent : t.running}</p>
       <p class="hint">{stopping ? t.queueStopping : t.runningHint}</p>
     {:else if stage.state === "failed"}
       <p class="failed">{t.failure[stage.failure]}</p>

@@ -303,6 +303,7 @@ export const fr = {
       "Un seul point de restauration, puis les désinstalleurs s'ouvrent l'un après l'autre. Les restes de chacun se recherchent à la fin.",
     queueLabel: "Programmes à désinstaller",
     withPoint: "Créer d'abord un point de restauration",
+    silent: "Sans les fenêtres des désinstalleurs, quand c'est possible",
     pointHint:
       "Windows demande l'autorisation administrateur s'il ne l'a pas déjà donnée.",
     withoutPoint: "Continuer sans point",
@@ -312,6 +313,8 @@ export const fr = {
     cancel: "Annuler",
     close: "Fermer",
     running: "Le désinstalleur est ouvert : suivez ses fenêtres.",
+    runningSilent:
+      "Désinstallation sans fenêtres. Si l'installeur ne le permet pas, ses fenêtres s'ouvrent : suivez-les.",
     runningHint:
       "L'attente dure jusqu'à la fin du désinstalleur et de tout ce qu'il a lancé.",
     stopWaiting: "Ne plus attendre",

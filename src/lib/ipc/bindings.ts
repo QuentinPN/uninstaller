@@ -76,11 +76,12 @@ export const commands = {
 	 */
 	quarantineHeldLeftovers: () => typedError<Cleaned_Serialize, ElevationFailure>(__TAURI_INVOKE("quarantine_held_leftovers")),
 	/**
-	 *  Runs the uninstaller of the program `id` names (F4, step 2) and answers once it and
-	 *  all it started have ended, or `stop_uninstaller` was called. Starting another stops
-	 *  the wait for the previous one, which keeps running.
+	 *  Runs the uninstaller of the program `id` names (F4, step 2), without windows when
+	 *  `silent` and its installer allows it (F7), and answers once it and all it started
+	 *  have ended, or `stop_uninstaller` was called. Starting another stops the wait for
+	 *  the previous one, which keeps running.
 	 */
-	runUninstaller: (id: string) => typedError<Uninstalled_Serialize, UninstallFailure>(__TAURI_INVOKE("run_uninstaller", { id })),
+	runUninstaller: (id: string, silent: boolean) => typedError<Uninstalled_Serialize, UninstallFailure>(__TAURI_INVOKE("run_uninstaller", { id, silent })),
 	/**
 	 *  Stops waiting for the uninstaller (one that opened a browser page, say): its
 	 *  `run_uninstaller` answers with `finished` false. The uninstaller is left running.
