@@ -146,7 +146,7 @@ export type Cleaned_Deserialize = {
 	moved: number,
 	/**  Refused without elevation (Program Files, HKLM): left in place. */
 	needsAdmin: number,
-	/**  Protected, in use, gone meanwhile, or not handled yet (services). */
+	/**  Protected, in use, gone meanwhile, or refused by Windows. */
 	failed: number,
 };
 
@@ -157,7 +157,7 @@ export type Cleaned_Serialize = {
 	moved: number,
 	/**  Refused without elevation (Program Files, HKLM): left in place. */
 	needsAdmin: number,
-	/**  Protected, in use, gone meanwhile, or not handled yet (services). */
+	/**  Protected, in use, gone meanwhile, or refused by Windows. */
 	failed: number,
 };
 

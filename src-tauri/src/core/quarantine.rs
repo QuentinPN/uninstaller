@@ -14,12 +14,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use specta::Type;
 
+use super::leftovers;
 use super::protect;
+use super::registry::paths;
 use super::registry::reg_file;
 use super::sizes;
 use super::store;
-use crate::win::registry::{self, Hive, View};
-use crate::win::scheduler;
+use crate::win::registry::{self, Hive, Key, View};
+use crate::win::{scheduler, service};
 
 const MANIFEST: &str = "manifest.json";
 /// Where moved items are kept, one entry per item, named by its index.
@@ -150,6 +152,9 @@ pub enum Kind {
     /// A scheduled task, kept as its definition. Its origin is its path as Task
     /// Scheduler shows it (`\Folder\Name`).
     Task,
+    /// A service, kept as its key's `.reg`. Its origin is that key, under
+    /// `paths::SERVICES`; a restored service runs again after the next restart.
+    Service,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -351,7 +356,37 @@ impl Batch {
         }
         let saved = scheduler::export(path)?;
         let index = self.save_copy(path, Kind::Task, saved.as_bytes())?;
-        if let Err(error) = scheduler::delete(path) {
+        self.remove_saved(index, || scheduler::delete(path))
+    }
+
+    /// Saves the key of the service `name` as a `.reg` into the batch, then stops and
+    /// removes the service, as `quarantine_task` does. Only a service the leftovers may
+    /// offer (`leftovers::service_program`) goes; it comes back from the `.reg`, which
+    /// Windows reads at the next start.
+    pub fn quarantine_service(&mut self, name: &str) -> Result<(), Error> {
+        self.active()?;
+        let key = service_key(name).ok_or(Error::Protected)?;
+        let offered = Key::open(Hive::LocalMachine, &key, View::Native64)
+            .is_some_and(|service| leftovers::service_program(&service).is_some());
+        if !offered {
+            return Err(Error::Protected);
+        }
+        let saved =
+            reg_file::export(Hive::LocalMachine, &key, View::Native64).ok_or(Error::Unreadable)?;
+        let origin = format!(r"{}\{key}", Hive::LocalMachine.name());
+        let index = self.save_copy(&origin, Kind::Service, &saved)?;
+        self.remove_saved(index, || service::delete(name))
+    }
+
+    /// Runs `remove` on the origin of the item at `index`, saved and `Copied`, and marks
+    /// it `Moved`. If Windows refuses, the origin is untouched: the item leaves the
+    /// manifest again.
+    fn remove_saved(
+        &mut self,
+        index: usize,
+        remove: impl FnOnce() -> io::Result<()>,
+    ) -> Result<(), Error> {
+        if let Err(error) = remove() {
             fs::remove_file(self.stored(index))?;
             self.items.pop();
             self.save()?;
@@ -412,7 +447,7 @@ impl Batch {
                 return Err(Error::Altered);
             }
             match item.kind {
-                Kind::Key => import_key(item, &stored)?,
+                Kind::Key | Kind::Service => import_key(item, &stored)?,
                 Kind::Task => import_task(item, &stored)?,
                 _ => put_back(&stored, &item.origin)?,
             }
@@ -619,6 +654,23 @@ fn origin_key(item: &Item) -> Result<(Hive, &str), Error> {
         .ok_or(Error::Corrupt)
 }
 
+/// A service item's name, from its origin key under `paths::SERVICES`.
+fn origin_service(item: &Item) -> Result<&str, Error> {
+    let (hive, path) = origin_key(item)?;
+    let prefix = format!(r"{}\", paths::SERVICES);
+    path.get(..prefix.len())
+        .filter(|start| matches!(hive, Hive::LocalMachine) && start.eq_ignore_ascii_case(&prefix))
+        .map(|_| &path[prefix.len()..])
+        .filter(|name| service_key(name).is_some())
+        .ok_or(Error::Corrupt)
+}
+
+/// The key of the service `name` under HKLM; `None` for a name that is not one.
+fn service_key(name: &str) -> Option<String> {
+    (!name.is_empty() && !name.contains(['\\', '/']))
+        .then(|| format!(r"{}\{name}", paths::SERVICES))
+}
+
 /// A task item's origin; a manifest naming none Task Scheduler would accept is corrupt.
 fn origin_task(item: &Item) -> Result<&str, Error> {
     item.origin
@@ -629,7 +681,7 @@ fn origin_task(item: &Item) -> Result<&str, Error> {
 
 fn origin_exists(item: &Item) -> Result<bool, Error> {
     Ok(match item.kind {
-        Kind::Key => {
+        Kind::Key | Kind::Service => {
             let (hive, path) = origin_key(item)?;
             registry::key_exists(hive, path, View::Native64)?
         }
@@ -645,6 +697,7 @@ fn remove_origin(item: &Item) -> Result<(), Error> {
             registry::delete_tree(hive, path, View::Native64)?;
         }
         Kind::Task => scheduler::delete(origin_task(item)?)?,
+        Kind::Service => service::delete(origin_service(item)?)?,
         _ => remove_tree(&item.origin)?,
     }
     Ok(())
@@ -796,6 +849,52 @@ mod tests {
         scheduler::delete(TASK).unwrap();
         assert!(restored.contains("<Enabled>false</Enabled>"));
         assert!(!scheduler::exists(TASK).unwrap());
+        batch.purge().unwrap();
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Drivers, absent services and names that are not one are refused untouched.
+    #[test]
+    fn refuses_services_the_leftovers_never_offer() {
+        let dir = sandbox("services");
+        let mut batch = Batch::create(&dir.join("quarantine"), "services").unwrap();
+        for name in [
+            "Tcpip",
+            "UninstallerTestAbsent",
+            r"Tcpip\Parameters",
+            "",
+        ] {
+            assert!(matches!(
+                batch.quarantine_service(name),
+                Err(Error::Protected)
+            ));
+        }
+        assert!(batch.items().is_empty());
+        batch.purge().unwrap();
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Creates a service that is never started, quarantines and restores it: Windows
+    /// only runs it again after a restart, so the restored key is removed by hand.
+    #[test]
+    #[ignore = "administrateur : VM"]
+    fn quarantines_and_restores_a_service() {
+        const NAME: &str = "UninstallerTest";
+        let dir = sandbox("service");
+        let binary = format!("\"{}\"", dir.join("service.exe").display());
+        service::tests::create(NAME, &binary).unwrap();
+        let key = service_key(NAME).unwrap();
+        let mut batch = Batch::create(&dir.join("quarantine"), "service").unwrap();
+        batch.quarantine_service(NAME).unwrap();
+        assert_eq!(batch.items()[0].kind, Kind::Service);
+        assert!(!registry::key_exists(Hive::LocalMachine, &key, View::Native64).unwrap());
+        batch.restore().unwrap();
+        let restored = Key::open(Hive::LocalMachine, &key, View::Native64).unwrap();
+        assert_eq!(
+            restored.string("ImagePath").as_deref(),
+            Some(binary.as_str())
+        );
+        registry::delete_tree(Hive::LocalMachine, &key, View::Native64).unwrap();
         batch.purge().unwrap();
         let _ = fs::remove_dir_all(dir);
     }

@@ -173,7 +173,7 @@ pub struct Cleaned {
     pub moved: u32,
     /// Refused without elevation (Program Files, HKLM): left in place.
     pub needs_admin: u32,
-    /// Protected, in use, gone meanwhile, or not handled yet (services).
+    /// Protected, in use, gone meanwhile, or refused by Windows.
     pub failed: u32,
 }
 
@@ -184,6 +184,7 @@ pub enum Held {
     Path(PathBuf),
     Key(String),
     Task(String),
+    Service(String),
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -192,6 +193,8 @@ enum Item<'a> {
     Key(&'a str),
     /// A scheduled task's path (`\Folder\Name`): it holds nothing and nothing holds it.
     Task(&'a str),
+    /// A service's name: like a task, it holds nothing and nothing holds it.
+    Service(&'a str),
 }
 
 impl Item<'_> {
@@ -200,6 +203,7 @@ impl Item<'_> {
             Item::Path(path) => Held::Path(path.to_path_buf()),
             Item::Key(key) => Held::Key((*key).to_owned()),
             Item::Task(task) => Held::Task((*task).to_owned()),
+            Item::Service(name) => Held::Service((*name).to_owned()),
         }
     }
 
@@ -207,7 +211,7 @@ impl Item<'_> {
         match self {
             Item::Path(path) => path.components().count(),
             Item::Key(key) => key.split('\\').count(),
-            Item::Task(_) => 0,
+            Item::Task(_) | Item::Service(_) => 0,
         }
     }
 
@@ -238,8 +242,8 @@ pub fn clean(
             List::Folders => found.folders.get(index).map(|f| Item::Path(&f.path)),
             List::Shortcuts => found.shortcuts.get(index).map(|s| Item::Path(&s.path)),
             List::Keys => found.keys.get(index).map(|k| Item::Key(&k.name)),
+            List::Services => found.services.get(index).map(|s| Item::Service(&s.name)),
             List::Tasks => found.tasks.get(index).map(|t| Item::Task(&t.name)),
-            List::Services => None,
         }
     });
     quarantine_items(items, root, label)
@@ -270,6 +274,11 @@ pub fn clean_held(
             .iter()
             .find(|named| &named.name == task)
             .map(|named| Item::Task(&named.name)),
+        Held::Service(name) => found
+            .services
+            .iter()
+            .find(|named| &named.name == name)
+            .map(|named| Item::Service(&named.name)),
     });
     Ok(quarantine_items(items, root, label)?.0)
 }
@@ -305,6 +314,7 @@ fn quarantine_items<'a>(
             Item::Path(path) => batch.quarantine(path),
             Item::Key(key) => batch.quarantine_key(key),
             Item::Task(task) => batch.quarantine_task(task),
+            Item::Service(name) => batch.quarantine_service(name),
         };
         match done {
             Ok(()) => {
@@ -625,14 +635,7 @@ pub fn services() -> Vec<Service> {
         .into_iter()
         .filter_map(|name| {
             let service = root.subkey(&name)?;
-            // SERVICE_WIN32_OWN_PROCESS | SERVICE_WIN32_SHARE_PROCESS: drivers lack both.
-            if service.dword("Type")? & 0x30 == 0 {
-                return None;
-            }
-            let binary = inventory::command_program(&service.string("ImagePath")?)?;
-            if protect::is_protected(&binary) {
-                return None;
-            }
+            let binary = service_program(&service)?;
             Some(Service {
                 display: service.string("DisplayName"),
                 binary_exists: binary.is_file(),
@@ -641,6 +644,18 @@ pub fn services() -> Vec<Service> {
             })
         })
         .collect()
+}
+
+/// The program of the service whose key is `service`, if it is one the leftovers may
+/// offer: a service (not a driver) run from a full path outside the protected
+/// folders. The quarantine asks again before it removes one.
+pub fn service_program(service: &Key) -> Option<PathBuf> {
+    // SERVICE_WIN32_OWN_PROCESS | SERVICE_WIN32_SHARE_PROCESS: drivers lack both.
+    if service.dword("Type")? & 0x30 == 0 {
+        return None;
+    }
+    let binary = inventory::command_program(&service.string("ImagePath")?)?;
+    (!protect::is_protected(&binary)).then_some(binary)
 }
 
 /// A scheduled task and the program its first "start a program" action runs, read once

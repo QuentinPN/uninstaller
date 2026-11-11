@@ -16,7 +16,6 @@ import {
   count,
   groups,
   picks,
-  removable,
   safeIds,
   TABS,
   type Tab,
@@ -210,7 +209,6 @@ onMount(() => {
   <div class="groups">
     {#each shown as group (group.key)}
       {@const box = check(group.items, selected)}
-      {@const locked = !removable(group.key) || cleaning}
       <section aria-label={t.group[group.key]}>
         <label class="group-head">
           <input
@@ -218,14 +216,11 @@ onMount(() => {
             aria-label={t.selectGroup(t.group[group.key])}
             checked={box === "all"}
             indeterminate={box === "some"}
-            disabled={locked}
+            disabled={cleaning}
             onchange={() => (selected = toggleAll(group.items, selected))}
           />
           <span class="group-name">{t.group[group.key]}</span>
           <span class="num">{group.items.length}</span>
-          {#if !removable(group.key)}
-            <span class="later">{t.later}</span>
-          {/if}
         </label>
         <ul>
           {#each group.items as item (item.id)}
@@ -234,10 +229,10 @@ onMount(() => {
                 <input
                   type="checkbox"
                   checked={selected.has(item.id)}
-                  disabled={locked}
+                  disabled={cleaning}
                   onchange={() => (selected = toggle(item.id, selected))}
                 />
-                <span class="label" class:safe={item.confidence === "safe" && removable(group.key)}>
+                <span class="label" class:safe={item.confidence === "safe"}>
                   {item.label}
                 </span>
                 <span class="confidence">{t.confidence[item.confidence]}</span>
@@ -328,12 +323,8 @@ onMount(() => {
   .group-name {
     font-weight: 500;
   }
-  .group-head .num,
-  .later {
+  .group-head .num {
     color: var(--color-text-muted);
-  }
-  .later {
-    margin-left: auto;
   }
   ul {
     margin: 0;

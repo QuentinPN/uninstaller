@@ -10,18 +10,6 @@ export const TABS: Record<Tab, GroupKey[]> = {
   registry: ["keys", "services", "tasks"],
 };
 
-/** What the quarantine takes for now; services wait. */
-const REMOVABLE: ReadonlySet<GroupKey> = new Set<GroupKey>([
-  "folders",
-  "shortcuts",
-  "keys",
-  "tasks",
-]);
-
-export function removable(key: GroupKey): boolean {
-  return REMOVABLE.has(key);
-}
-
 export interface Item {
   /** `group:index` in the scan's answer, stable while it is shown. */
   id: string;
@@ -60,8 +48,7 @@ export function safeIds(found: Found): Set<string> {
   for (const tab of Object.keys(TABS) as Tab[]) {
     for (const group of groups(found, tab)) {
       for (const item of group.items) {
-        if (removable(group.key) && item.confidence === "safe")
-          ids.add(item.id);
+        if (item.confidence === "safe") ids.add(item.id);
       }
     }
   }

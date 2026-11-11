@@ -9,9 +9,9 @@ use windows::Win32::System::TaskScheduler::{
     TASK_CREATE, TASK_ENUM_HIDDEN, TASK_LOGON_PASSWORD, TASK_LOGON_TYPE, TaskScheduler,
 };
 use windows::Win32::System::Variant::VARIANT;
-use windows::core::{BSTR, Error, HRESULT, Interface};
+use windows::core::{BSTR, Interface};
 
-use crate::win::com;
+use crate::win::{com, os_error as os};
 
 /// A registered task: its full path (`\Folder\Name`) and the program of each of its
 /// "start a program" actions, as written (variables not expanded, maybe quoted).
@@ -124,19 +124,6 @@ fn connect() -> io::Result<(ITaskService, ITaskFolder)> {
         )
     };
     connected.map_err(os)
-}
-
-/// A Windows error as `io::Error`, with its own kind (`NotFound`, `PermissionDenied`)
-/// when the HRESULT wraps a Win32 code.
-fn os(error: Error) -> io::Error {
-    const WIN32: u32 = 0x8007_0000;
-    let HRESULT(code) = error.code();
-    let code = code.cast_unsigned();
-    if code & 0xFFFF_0000 == WIN32 {
-        io::Error::from_raw_os_error((code & 0xFFFF).cast_signed())
-    } else {
-        error.into()
-    }
 }
 
 /// The tasks of `folder` and of its subfolders, depth first.

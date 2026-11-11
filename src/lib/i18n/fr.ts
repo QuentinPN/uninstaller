@@ -232,8 +232,6 @@ export const fr = {
     selected: (n: number) =>
       `${n} élément${n > 1 ? "s" : ""} sélectionné${n > 1 ? "s" : ""}`,
     tabEmpty: "Rien dans cet onglet.",
-    /** Services: listed, not yet removable. */
-    later: "Retrait pas encore pris en charge",
     quarantine: "Mettre en quarantaine",
     confirm: (n: number) =>
       `${n} élément${n > 1 ? "s" : ""} ${n > 1 ? "seront déplacés" : "sera déplacé"} en quarantaine. Vous pourrez ${n > 1 ? "les" : "le"} restaurer depuis Sauvegardes.`,
