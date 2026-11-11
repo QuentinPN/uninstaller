@@ -1345,4 +1345,110 @@ mod tests {
         let sdk = Target::new("Windows SDK Signing Tools", Some("Microsoft"), None, vec![]);
         assert!(sdk.scan(&[appdata]).is_empty());
     }
+
+    /// Runs `script` of the fixture program (repository's `fixtures/`).
+    fn fixture(script: &str) {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(r"..\fixtures")
+            .join(script);
+        let ran = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+            .arg(path)
+            .status()
+            .unwrap();
+        assert!(ran.success(), "{script}");
+    }
+
+    /// Removes the fixture whatever the test's outcome.
+    struct Installed;
+
+    impl Drop for Installed {
+        fn drop(&mut self) {
+            fixture("remove.ps1");
+        }
+    }
+
+    /// TESTING.md, level 3: installs the fixture program, runs its own (incomplete)
+    /// uninstaller from its Uninstall entry, then checks the scan proposes what it left
+    /// and nothing else, and that the quarantine takes all of it and gives it back.
+    /// Run it alone: its task is the one `quarantines_and_restores_a_scheduled_task` uses.
+    #[test]
+    #[ignore = "fixture : installe UninstallerFixture pour l'utilisateur courant"]
+    fn the_fixture_leftovers_go_to_quarantine_and_come_back() {
+        use std::os::windows::process::CommandExt;
+        const NAME: &str = "UninstallerFixture";
+        const KEY: &str = r"Software\UninstallerFixture";
+        const TASK: &str = r"\UninstallerTest";
+        let _installed = Installed;
+        fixture("install.ps1");
+        let program = inventory::scan()
+            .into_iter()
+            .find(|p| p.name == NAME)
+            .expect("listed once installed");
+        let uninstall = program.uninstall_string.clone().unwrap();
+        let ran = std::process::Command::new("cmd")
+            .arg("/C")
+            .raw_arg(&uninstall)
+            .status()
+            .unwrap();
+        assert!(ran.success());
+        let all = inventory::scan();
+        assert!(all.iter().all(|p| p.name != NAME));
+
+        let found = find(&program, &all, &AtomicBool::new(false)).unwrap();
+        let env = |var| PathBuf::from(std::env::var_os(var).unwrap());
+        let install = env("LOCALAPPDATA").join("Programs").join(NAME);
+        let data = env("APPDATA").join(NAME);
+        let link =
+            env("APPDATA").join(format!(r"Microsoft\Windows\Start Menu\Programs\{NAME}.lnk"));
+        let paths = |list: &[Leftover]| list.iter().map(|l| l.path.clone()).collect::<Vec<_>>();
+        let names = |list: &[Named]| list.iter().map(|n| n.name.clone()).collect::<Vec<_>>();
+        let mut folders = paths(&found.folders);
+        folders.sort();
+        assert_eq!(folders, [install.clone(), data.clone()]);
+        assert_eq!(paths(&found.shortcuts), std::slice::from_ref(&link));
+        assert_eq!(names(&found.keys), [format!(r"HKEY_CURRENT_USER\{KEY}")]);
+        assert!(found.services.is_empty());
+        assert_eq!(names(&found.tasks), [TASK]);
+
+        let lists = [
+            (List::Folders, found.folders.len()),
+            (List::Shortcuts, found.shortcuts.len()),
+            (List::Keys, found.keys.len()),
+            (List::Tasks, found.tasks.len()),
+        ];
+        let picks: Vec<Pick> = lists
+            .into_iter()
+            .flat_map(|(list, n)| (0..n as u32).map(move |index| Pick { list, index }))
+            .collect();
+        let root = std::env::temp_dir()
+            .join("uninstaller-tests")
+            .join(format!("fixture-{}", std::process::id()));
+        let (cleaned, held) = clean(&found, &picks, &root, NAME).unwrap();
+        assert_eq!(
+            (cleaned.moved, cleaned.needs_admin, cleaned.failed),
+            (5, 0, 0)
+        );
+        assert!(held.is_empty());
+        let key_exists = || registry::key_exists(Hive::CurrentUser, KEY, View::Native64).unwrap();
+        let present = || {
+            [
+                install.exists(),
+                data.exists(),
+                link.exists(),
+                key_exists(),
+                scheduler::exists(TASK).unwrap(),
+            ]
+        };
+        assert_eq!(present(), [false; 5]);
+
+        let dir = quarantine::batch_dir(&root, &cleaned.batch.unwrap()).unwrap();
+        let mut batch = quarantine::Batch::open(&dir).unwrap();
+        batch.restore().unwrap();
+        assert_eq!(present(), [true; 5]);
+        assert!(data.join("settings.ini").is_file());
+        assert!(install.join(r"logs\app.log").is_file());
+        batch.purge().unwrap();
+        let _ = fs::remove_dir_all(root);
+    }
 }
