@@ -4,6 +4,7 @@ use serde::Serialize;
 use specta::Type;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use crate::core::registry::paths::Source;
 use crate::win::registry::Key;
@@ -158,6 +159,39 @@ pub fn find(id: &str) -> Option<Program> {
     parse(&source, key_name, &entry).map(checked)
 }
 
+/// Programs kept as listed before their uninstaller ran, newest last: their entry is
+/// gone once uninstalled, and the leftover scan still needs their name, publisher and
+/// folder. A batch uninstall keeps several.
+pub struct Kept(Mutex<Vec<Program>>);
+
+impl Kept {
+    /// More than any batch: the oldest is dropped past this.
+    const MAX: usize = 64;
+
+    pub const fn new() -> Self {
+        Self(Mutex::new(Vec::new()))
+    }
+
+    /// Keeps `program`, replacing what was kept under its id.
+    pub fn keep(&self, program: Program) {
+        let mut kept = self.lock();
+        kept.retain(|other| other.id != program.id);
+        if kept.len() == Self::MAX {
+            kept.remove(0);
+        }
+        kept.push(program);
+    }
+
+    /// The program `id`: listed, or kept before its uninstaller ran.
+    pub fn find(&self, id: &str) -> Option<Program> {
+        find(id).or_else(|| self.lock().iter().find(|kept| kept.id == id).cloned())
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<Program>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 /// Adds what the registry alone cannot tell: whether the program is still on disk.
 fn checked(mut program: Program) -> Program {
     program.orphan = program.is_orphan();
@@ -282,6 +316,24 @@ pub(crate) mod tests {
             kind: Kind::App,
             orphan: false,
         }
+    }
+
+    #[test]
+    fn kept_programs_are_found_by_id_newest_replacing() {
+        let kept = Kept::new();
+        assert!(kept.find("gone").is_none());
+        kept.keep(program("gone", None));
+        kept.keep(program("other", Some(r"C:\Old")));
+        kept.keep(program("other", Some(r"C:\New")));
+        assert_eq!(kept.find("gone").map(|p| p.id), Some("gone".into()));
+        assert_eq!(
+            kept.find("other").and_then(|p| p.install_location),
+            Some(r"C:\New".into())
+        );
+        for i in 0..Kept::MAX {
+            kept.keep(program(&format!("filler{i}"), None));
+        }
+        assert!(kept.find("gone").is_none());
     }
 
     /// The fixed source of `scope`.

@@ -288,6 +288,7 @@ export const fr = {
     /** In the details panel; also Entrée or Suppr on the list. */
     action: "Désinstaller",
     title: (name: string) => `Désinstaller ${name}`,
+    titleMany: (n: number) => `Désinstaller ${n} programmes`,
     stepsLabel: "Étapes de la désinstallation",
     /** In order; the sheet shows the first two, the leftovers screen the others. */
     steps: {
@@ -298,6 +299,9 @@ export const fr = {
     },
     intro:
       "Le désinstalleur du programme s'ouvre, puis ses restes sont recherchés. Rien n'est supprimé sans votre accord : ce que vous retirez part en quarantaine.",
+    introMany:
+      "Un seul point de restauration, puis les désinstalleurs s'ouvrent l'un après l'autre. Les restes de chacun se recherchent à la fin.",
+    queueLabel: "Programmes à désinstaller",
     withPoint: "Créer d'abord un point de restauration",
     pointHint:
       "Windows demande l'autorisation administrateur s'il ne l'a pas déjà donnée.",
@@ -311,6 +315,20 @@ export const fr = {
     runningHint:
       "L'attente dure jusqu'à la fin du désinstalleur et de tout ce qu'il a lancé.",
     stopWaiting: "Ne plus attendre",
+    progress: (i: number, n: number, name: string) => `${i} sur ${n} · ${name}`,
+    stopQueue: "Arrêter après celui-ci",
+    queueStopping:
+      "Les programmes suivants ne seront pas désinstallés : la file s'arrête après celui-ci.",
+    summaryLabel: "Bilan de la désinstallation",
+    summaryHint:
+      "Recherchez les restes de chaque programme dont le désinstalleur s'est ouvert.",
+    /** In the batch summary, besides the failures. */
+    outcome: {
+      done: "Désinstallé",
+      stopped: "Attente arrêtée",
+      stillListed: "Toujours installé",
+      skipped: "Non lancé",
+    },
     stillListed: (name: string) =>
       `${name} figure toujours parmi les programmes installés : sa désinstallation a peut-être été annulée.`,
     /** By `UninstallFailure`. */

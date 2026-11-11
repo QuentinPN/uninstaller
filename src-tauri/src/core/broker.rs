@@ -12,7 +12,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use crate::core::inventory::{self, Program};
+use crate::core::inventory::{self, Kept};
 use crate::core::leftovers::{self, Cleaned, Held};
 use crate::core::quarantine::{self, BatchAction, BatchFailure};
 use crate::core::registry::paths::SYSTEM_RESTORE;
@@ -32,8 +32,8 @@ const MAX_FRAME: u32 = 1024 * 1024;
 /// The broker quits after this long without a request (ADR 0002).
 const IDLE: Duration = Duration::from_secs(5 * 60);
 
-/// The program `Request::Remember` named, as the broker's own inventory listed it.
-static REMEMBERED: Mutex<Option<Program>> = Mutex::new(None);
+/// The programs `Request::Remember` named, as the broker's own inventory listed them.
+static REMEMBERED: Kept = Kept::new();
 
 /// What the app asks the broker. Each new elevated operation is a new variant.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -235,27 +235,17 @@ fn answer(request: Request) -> Reply {
     }
 }
 
-/// Keeps the program `id` as listed now; an unknown id forgets the previous one.
+/// Keeps the program `id` as listed now, if it is.
 fn remember(id: &str) -> bool {
-    let program = inventory::find(id);
-    let listed = program.is_some();
-    *remembered() = program;
-    listed
-}
-
-/// The program `id`: listed, or the one remembered before its uninstaller ran.
-fn listed_or_remembered(id: &str) -> Option<Program> {
-    inventory::find(id).or_else(|| remembered().clone().filter(|gone| gone.id == id))
-}
-
-fn remembered() -> std::sync::MutexGuard<'static, Option<Program>> {
-    REMEMBERED.lock().unwrap_or_else(PoisonError::into_inner)
+    inventory::find(id)
+        .map(|program| REMEMBERED.keep(program))
+        .is_some()
 }
 
 /// Scans the program `id` again, elevated, and moves the `held` items it lists too
 /// into `batch`.
 fn clean_held(id: &str, batch: Option<&str>, held: &[Held]) -> Option<Cleaned> {
-    let program = listed_or_remembered(id)?;
+    let program = REMEMBERED.find(id)?;
     let found = leftovers::find(&program, &inventory::scan(), &AtomicBool::new(false))?;
     let root = quarantine::secure_admin_root()?;
     leftovers::clean_held(&found, held, &root, batch, &program.name).ok()
@@ -517,28 +507,15 @@ mod tests {
         ));
     }
 
-    /// The only test that touches `REMEMBERED`.
     #[test]
-    fn a_remembered_program_is_found_once_unlisted() {
+    fn an_unlisted_program_is_not_remembered() {
         assert_eq!(
             answer(Request::Remember {
                 program: "unknown".into()
             }),
             Reply::Remembered(false)
         );
-        assert!(listed_or_remembered("unknown").is_none());
-        let mut gone = inventory::scan()
-            .into_iter()
-            .next()
-            .expect("a listed program");
-        gone.id = "uninstalled".into();
-        *remembered() = Some(gone.clone());
-        assert_eq!(
-            listed_or_remembered("uninstalled").map(|p| p.id),
-            Some(gone.id)
-        );
-        assert!(listed_or_remembered("other").is_none());
-        *remembered() = None;
+        assert!(REMEMBERED.find("unknown").is_none());
     }
 
     #[test]

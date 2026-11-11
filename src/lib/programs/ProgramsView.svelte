@@ -212,8 +212,8 @@ function measure(current: number) {
 let leftoversOf = $state<Program | null>(null);
 /** The leftovers screen continues a guided uninstall (steps 3 and 4). */
 let guided = $state(false);
-/** The program whose uninstall sheet is open, if any. */
-let uninstalling = $state<Program | null>(null);
+/** The programs of the open uninstall sheet: none when it is closed. */
+let uninstalling = $state<Program[]>([]);
 
 function closeLeftovers() {
   leftoversOf = null;
@@ -224,17 +224,24 @@ function closeLeftovers() {
   tick().then(() => list?.focus());
 }
 
+/** Entrée or Suppr on a row of a multiple selection uninstalls the whole selection. */
+function uninstall(program: Program) {
+  uninstalling =
+    selection.keys.has(program.id) && chosen.length ? chosen : [program];
+}
+
 function closeUninstall(ran: boolean) {
-  uninstalling = null;
+  uninstalling = [];
   if (ran) load();
   tick().then(() => list?.focus());
 }
 
-/** The uninstaller has ended: its leftovers, for the program as listed before. */
-function uninstallLeftovers() {
-  leftoversOf = uninstalling;
-  uninstalling = null;
+/** An uninstaller has ended: its leftovers, for the program as listed before. A
+ * batch's sheet waits behind, at its summary. */
+function uninstallLeftovers(program: Program) {
+  leftoversOf = program;
   guided = true;
+  if (uninstalling.length === 1) uninstalling = [];
 }
 
 function closeDetails() {
@@ -244,7 +251,7 @@ function closeDetails() {
 
 function onkeydown(event: KeyboardEvent) {
   // The uninstall sheet takes its own Échap: the details stay open behind it.
-  if (event.code !== "Escape" || !detailsOpen || uninstalling) return;
+  if (event.code !== "Escape" || !detailsOpen || uninstalling.length) return;
   event.preventDefault();
   closeDetails();
 }
@@ -422,7 +429,7 @@ onMount(load);
     key={(p) => p.id}
     label={fr.programs.list}
     onopen={() => (detailsOpen = true)}
-    onremove={(p) => (uninstalling = p)}
+    onremove={uninstall}
     group={(p) => groupLabel(p, group, sizes)}
   >
     {#snippet row(p: Program)}
@@ -479,7 +486,7 @@ onMount(load);
 {#if details}
   <ProgramDetails program={details} diskSizeKib={sizes.get(details.id)} onclose={closeDetails}
     onleftovers={() => (leftoversOf = details)}
-    onuninstall={() => (uninstalling = details)}
+    onuninstall={() => (uninstalling = [details])}
   />
 {/if}
 {#if printing}
@@ -487,8 +494,9 @@ onMount(load);
 {/if}
 </div>
 {/if}
-{#if uninstalling}
-  <UninstallSheet program={uninstalling} onclose={closeUninstall}
+{#if uninstalling.length}
+  <UninstallSheet programs={uninstalling} hidden={leftoversOf !== null}
+    onclose={closeUninstall}
     onleftovers={uninstallLeftovers}
   />
 {/if}

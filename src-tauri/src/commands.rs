@@ -13,7 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::ipc::Channel;
 
 use crate::core::broker::{Client, Reply, Request, RestorePoint, SystemPoint};
-use crate::core::inventory::{self, Program};
+use crate::core::inventory::{self, Kept, Program};
 use crate::core::leftovers::{self, Cleaned, Found, Held, Pick};
 use crate::core::quarantine::{self, BatchAction, BatchFailure, BatchSummary};
 use crate::core::settings::{self, Settings};
@@ -294,9 +294,8 @@ static LEFTOVER_SCAN: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
 /// Raised to stop waiting for the uninstaller started last.
 static UNINSTALL_WAIT: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
 
-/// The program whose uninstaller ran last, as listed before: its entry is gone once
-/// uninstalled, and the leftover scan still needs its name, publisher and folder.
-static UNINSTALLED: Mutex<Option<Program>> = Mutex::new(None);
+/// The programs whose uninstaller ran, as listed before.
+static UNINSTALLED: Kept = Kept::new();
 
 /// The last scan that answered, for `quarantine_leftovers` to read the picks from: the
 /// UI sends back places in it, never paths.
@@ -350,9 +349,7 @@ pub enum LeftoverFailure {
 pub async fn scan_leftovers(id: String) -> Result<Scan, LeftoverFailure> {
     let cancelled = fresh_flag(&LEFTOVER_SCAN);
     tauri::async_runtime::spawn_blocking(move || {
-        let program = inventory::find(&id)
-            .or_else(|| uninstalled().clone().filter(|gone| gone.id == id))
-            .ok_or(LeftoverFailure::NotFound)?;
+        let program = UNINSTALLED.find(&id).ok_or(LeftoverFailure::NotFound)?;
         let all = inventory::scan();
         let found =
             leftovers::find(&program, &all, &cancelled).ok_or(LeftoverFailure::Cancelled)?;
@@ -390,7 +387,7 @@ pub async fn run_uninstaller(id: String) -> Result<Uninstalled, UninstallFailure
     let stop = fresh_flag(&UNINSTALL_WAIT);
     tauri::async_runtime::spawn_blocking(move || {
         let program = inventory::find(&id).ok_or(UninstallFailure::NotFound)?;
-        *uninstalled() = Some(program.clone());
+        UNINSTALLED.keep(program.clone());
         // The broker's leftover pass needs the program once its entry is gone. Only a
         // broker already running (after the restore point) is told: no extra prompt.
         running_broker(&Request::Remember {
@@ -464,10 +461,6 @@ pub async fn quarantine_held_leftovers() -> Result<Cleaned, ElevationFailure> {
         *held = None;
     }
     Ok(cleaned)
-}
-
-fn uninstalled() -> std::sync::MutexGuard<'static, Option<Program>> {
-    UNINSTALLED.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn held_leftovers() -> std::sync::MutexGuard<'static, Option<Pending>> {
