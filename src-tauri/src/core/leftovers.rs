@@ -20,7 +20,7 @@ use crate::core::quarantine;
 use crate::core::registry::paths;
 use crate::core::sizes;
 use crate::win::registry::{Hive, Key, View};
-use crate::win::{icon, scheduler, shortcut};
+use crate::win::{icon, scheduler, shortcut, version};
 
 /// How surely a folder belongs to the program (SECURITY.md 5). Ordered from the
 /// surest: the Safe depth keeps `Safe`, Moderate adds `Moderate`, Advanced adds all.
@@ -141,7 +141,7 @@ pub struct Found {
 pub enum ForceFailure {
     /// The name, or the folder's when none is typed, is too short to match anything.
     TooShort,
-    /// The folder typed is not a folder of this PC.
+    /// What was typed is neither a folder nor an executable of this PC.
     NoFolder,
     /// The folder typed is a system one, never searched.
     Protected,
@@ -154,10 +154,24 @@ pub enum ForceFailure {
 }
 
 /// A program no entry lists, from the `name` and `folder` the user typed (either may
-/// be empty): the folder's name stands for a missing name.
+/// be empty). `folder` may also be one of its executables: its folder is searched, and
+/// its product name stands for a missing name, before the folder's own name.
 pub fn unlisted(name: &str, folder: &str, all: &[Program]) -> Result<Program, ForceFailure> {
-    let folder = folder.trim().trim_matches('"');
-    let folder = (!folder.is_empty()).then(|| PathBuf::from(folder));
+    let typed = Path::new(folder.trim().trim_matches('"'));
+    let executable = typed.is_absolute()
+        && typed
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+        && typed.is_file();
+    let product = executable.then(|| version::product_name(typed)).flatten();
+    let folder = if executable {
+        typed.parent()
+    } else {
+        Some(typed)
+    };
+    let folder = folder
+        .filter(|f| !f.as_os_str().is_empty())
+        .map(Path::to_path_buf);
     if let Some(folder) = &folder {
         if protect::is_protected(folder) {
             return Err(ForceFailure::Protected);
@@ -170,10 +184,11 @@ pub fn unlisted(name: &str, folder: &str, all: &[Program]) -> Result<Program, Fo
         }
     }
     let name = match name.trim() {
-        "" => folder
-            .as_deref()
-            .and_then(Path::file_name)
-            .map(|n| n.to_string_lossy().into_owned())
+        "" => product
+            .or_else(|| {
+                let name = folder.as_deref()?.file_name()?;
+                Some(name.to_string_lossy().into_owned())
+            })
             .unwrap_or_default(),
         typed => typed.to_owned(),
     };
@@ -1004,6 +1019,20 @@ mod tests {
         assert_eq!(from_folder.install_folder(), Some(folder.clone()));
 
         let windows = std::env::var("SystemRoot").unwrap();
+        let notepad = Path::new(&windows).join(r"System32\notepad.exe");
+        let exe = folder.join("Widget.EXE");
+        fs::copy(&notepad, &exe).unwrap();
+        let from_exe = unlisted("", &exe.to_string_lossy(), &listed).unwrap();
+        assert!(from_exe.name.contains("Windows"), "{}", from_exe.name);
+        assert_eq!(from_exe.install_folder(), Some(folder.clone()));
+        let named_exe = unlisted("Widget", &exe.to_string_lossy(), &listed).unwrap();
+        assert_eq!(named_exe.name, "Widget");
+        assert_eq!(
+            unlisted("", &notepad.to_string_lossy(), &listed).err(),
+            Some(ForceFailure::Protected)
+        );
+        fs::remove_file(&exe).unwrap();
+
         for (name, folder, failure) in [
             ("", "", ForceFailure::TooShort),
             ("Wi", "", ForceFailure::TooShort),

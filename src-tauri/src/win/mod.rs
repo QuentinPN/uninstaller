@@ -13,6 +13,7 @@ pub mod security;
 pub mod service;
 pub mod shortcut;
 pub mod token;
+pub mod version;
 
 use std::io;
 

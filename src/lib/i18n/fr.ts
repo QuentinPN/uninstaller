@@ -354,17 +354,18 @@ export const fr = {
     button: "Programme non listé…",
     title: "Forcer la désinstallation d'un programme non listé",
     intro:
-      "Ses restes sont recherchés d'après son nom ou son dossier d'installation. Ce que vous retirez part en quarantaine.",
+      "Ses restes sont recherchés d'après son nom, son dossier d'installation ou l'un de ses exécutables. Ce que vous retirez part en quarantaine.",
     name: "Nom du programme",
-    folder: "Dossier d'installation, facultatif",
+    folder: "Dossier d'installation ou exécutable, facultatif",
     folderPlaceholder: String.raw`C:\Program Files\Programme`,
     cancel: "Annuler",
     search: "Rechercher les restes",
     checking: "Vérification…",
     /** By `ForceFailure`. */
     failure: {
-      tooShort: "Saisissez un nom d'au moins trois lettres, ou un dossier.",
-      noFolder: "Ce dossier n'existe pas sur ce PC.",
+      tooShort:
+        "Saisissez un nom d'au moins trois lettres, un dossier ou un exécutable.",
+      noFolder: "Ce dossier ou cet exécutable n'existe pas sur ce PC.",
       protected: "C'est un dossier système : il n'est jamais parcouru.",
       link: "C'est un lien vers un autre dossier : saisissez ce dossier lui-même.",
       listed:

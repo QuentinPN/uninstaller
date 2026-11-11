@@ -217,7 +217,7 @@ export type ExportFormat = "html" | "csv" | "txt";
 export type ForceFailure = 
 /**  The name, or the folder's when none is typed, is too short to match anything. */
 "tooShort" | 
-/**  The folder typed is not a folder of this PC. */
+/**  What was typed is neither a folder nor an executable of this PC. */
 "noFolder" | 
 /**  The folder typed is a system one, never searched. */
 "protected" | 
