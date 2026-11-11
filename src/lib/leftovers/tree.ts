@@ -15,6 +15,8 @@ export interface Item {
   id: string;
   label: string;
   confidence: Confidence;
+  /** Size on disk of a folder or shortcut; none for a registry entry. */
+  kib: number | null;
 }
 
 export interface Group {
@@ -33,6 +35,7 @@ export function groups(found: Found, tab: Tab): Group[] {
         id: `${key}:${i}`,
         label: "path" in entry ? entry.path : entry.name,
         confidence: entry.confidence,
+        kib: "path" in entry ? entry.sizeKib : null,
       })),
     }))
     .filter((group) => group.items.length);
@@ -53,6 +56,24 @@ export function safeIds(found: Found): Set<string> {
     }
   }
   return ids;
+}
+
+/** What the selected folders and shortcuts take, each counted once: an item inside a
+ * selected folder is already in that folder's size. */
+export function selectedKib(
+  found: Found,
+  selected: ReadonlySet<string>,
+): number {
+  const chosen = groups(found, "files")
+    .flatMap((group) => group.items)
+    .filter((item) => selected.has(item.id));
+  const folded = chosen.map((item) => `${item.label.toLowerCase()}\\`);
+  return chosen
+    .filter((item) => {
+      const path = item.label.toLowerCase();
+      return !folded.some((parent) => path.startsWith(parent));
+    })
+    .reduce((kib, item) => kib + (item.kib ?? 0), 0);
 }
 
 export function check(items: Item[], selected: ReadonlySet<string>): Check {

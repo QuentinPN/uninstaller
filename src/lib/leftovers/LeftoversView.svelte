@@ -1,5 +1,6 @@
 <script lang="ts">
 import { onMount } from "svelte";
+import { formatSize } from "../format";
 import { fr } from "../i18n/fr";
 import {
   type Cleaned,
@@ -17,6 +18,7 @@ import {
   groups,
   picks,
   safeIds,
+  selectedKib,
   TABS,
   type Tab,
   toggle,
@@ -56,6 +58,7 @@ const total = $derived(
   found ? TAB_KEYS.reduce((n, key) => n + count(found, key), 0) : 0,
 );
 const shown = $derived(found ? groups(found, tab) : []);
+const chosenKib = $derived(found ? selectedKib(found, selected) : 0);
 
 function start() {
   const current = ++run;
@@ -184,7 +187,9 @@ onMount(() => {
     <button class="toggle" onclick={() => (selected = safeIds(found))}>
       {t.selectSafe}
     </button>
-    <p class="summary chosen num" role="status">{t.selected(selected.size)}</p>
+    <p class="summary chosen num" role="status">
+      {t.selected(selected.size, chosenKib ? formatSize(chosenKib) : undefined)}
+    </p>
     <button
       class="action"
       disabled={!selected.size || cleaning || confirming}
@@ -235,6 +240,9 @@ onMount(() => {
                 <span class="label" class:safe={item.confidence === "safe"}>
                   {item.label}
                 </span>
+                {#if item.kib !== null}
+                  <span class="size num">{formatSize(item.kib)}</span>
+                {/if}
                 <span class="confidence">{t.confidence[item.confidence]}</span>
               </label>
             </li>
@@ -367,6 +375,7 @@ onMount(() => {
     color: var(--color-text);
     font-weight: 600;
   }
+  .size,
   .confidence {
     flex: none;
     color: var(--color-text-muted);

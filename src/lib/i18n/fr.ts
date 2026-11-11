@@ -229,8 +229,9 @@ export const fr = {
     selectSafe: "Tout sélectionner (sûrs)",
     selectGroup: (group: string) => `Sélectionner : ${group}`,
     found: (n: number) => `${n} trouvé${n > 1 ? "s" : ""}`,
-    selected: (n: number) =>
-      `${n} élément${n > 1 ? "s" : ""} sélectionné${n > 1 ? "s" : ""}`,
+    /** `size` only when the selection holds files: registry entries have none. */
+    selected: (n: number, size?: string) =>
+      `${n} élément${n > 1 ? "s" : ""} sélectionné${n > 1 ? "s" : ""}${size ? ` · ${size}` : ""}`,
     tabEmpty: "Rien dans cet onglet.",
     quarantine: "Mettre en quarantaine",
     confirm: (n: number) =>

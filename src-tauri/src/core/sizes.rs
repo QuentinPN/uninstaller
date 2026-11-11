@@ -87,6 +87,16 @@ pub fn kib(bytes: u64) -> u32 {
     u32::try_from(bytes.div_ceil(1024)).unwrap_or(u32::MAX)
 }
 
+/// Bytes of the file at `path`, or of every file under the folder there; a link
+/// itself counts as zero.
+pub fn path_bytes(path: &Path) -> u64 {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() => folder_bytes(path),
+        Ok(meta) if meta.is_file() => meta.len(),
+        _ => 0,
+    }
+}
+
 /// Bytes of every file under `folder`. Junctions and symbolic links are not followed
 /// (they may point outside the program, or loop); unreadable entries count as zero.
 pub fn folder_bytes(folder: &Path) -> u64 {
@@ -131,6 +141,19 @@ mod tests {
         fs::write(dir.join("a.bin"), vec![0u8; 1500]).unwrap();
         fs::write(dir.join("sub").join("b.bin"), vec![0u8; 600]).unwrap();
         assert_eq!(folder_bytes(&dir), 2100);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A file counts its own bytes, a junction none of its target's.
+    #[test]
+    fn measures_a_file_a_folder_or_a_link_itself() {
+        let dir = temp_folder("path");
+        fs::write(dir.join("sub").join("b.bin"), vec![0u8; 600]).unwrap();
+        crate::core::test_support::junction(&dir.join("link"), &dir.join("sub"));
+        assert_eq!(path_bytes(&dir.join("sub").join("b.bin")), 600);
+        assert_eq!(path_bytes(&dir.join("link")), 0);
+        assert_eq!(path_bytes(&dir), 600);
+        assert_eq!(path_bytes(&dir.join("absent")), 0);
         fs::remove_dir_all(&dir).unwrap();
     }
 

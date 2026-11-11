@@ -18,6 +18,7 @@ use crate::core::inventory::{self, Program};
 use crate::core::protect;
 use crate::core::quarantine;
 use crate::core::registry::paths;
+use crate::core::sizes;
 use crate::win::registry::{Hive, Key, View};
 use crate::win::{icon, scheduler, shortcut};
 
@@ -36,9 +37,22 @@ pub enum Confidence {
 
 /// Ordered surest first, then by path.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
 pub struct Leftover {
     pub confidence: Confidence,
     pub path: PathBuf,
+    /// What it takes on disk, links not followed; 0 until `find` measures it.
+    pub size_kib: u32,
+}
+
+impl Leftover {
+    fn new(confidence: Confidence, path: PathBuf) -> Self {
+        Self {
+            confidence,
+            path,
+            size_kib: 0,
+        }
+    }
 }
 
 /// A registry key as regedit shows it (`HKEY_CURRENT_USER\Software\Acme\Widget`), a
@@ -127,9 +141,9 @@ pub fn find(program: &Program, all: &[Program], cancelled: &AtomicBool) -> Optio
     let target = Target::of(program, all);
     let go = || (!cancelled.load(Ordering::Relaxed)).then_some(());
     go()?;
-    let folders = target.scan(&roots());
+    let folders = measured(target.scan(&roots()), cancelled)?;
     go()?;
-    let shortcuts = target.shortcuts(&shortcuts(&shortcut_roots()));
+    let shortcuts = measured(target.shortcuts(&shortcuts(&shortcut_roots())), cancelled)?;
     go()?;
     let keys = target.keys(&paths::SOFTWARE_ROOTS);
     go()?;
@@ -144,6 +158,18 @@ pub fn find(program: &Program, all: &[Program], cancelled: &AtomicBool) -> Optio
         services,
         tasks,
     })
+}
+
+/// `items` with their size on disk; `None` once `cancelled` turns true, checked
+/// before each (a large folder takes a while).
+fn measured(mut items: Vec<Leftover>, cancelled: &AtomicBool) -> Option<Vec<Leftover>> {
+    for item in &mut items {
+        if cancelled.load(Ordering::Relaxed) {
+            return None;
+        }
+        item.size_kib = sizes::kib(sizes::path_bytes(&item.path));
+    }
+    Some(items)
 }
 
 /// A list of `Found`, for the UI to name an item by its list and its place in it.
@@ -386,7 +412,7 @@ impl Target {
             if let Some(confidence) = self.rate(&path, under_publisher)
                 && !found.iter().any(|f: &Leftover| same_path(&f.path, &path))
             {
-                found.push(Leftover { path, confidence });
+                found.push(Leftover::new(confidence, path));
             }
         };
         for root in roots {
@@ -481,10 +507,10 @@ impl Target {
     /// is someone else's.
     pub fn shortcuts(&self, shortcuts: &[Shortcut]) -> Vec<Leftover> {
         self.rate_all(shortcuts, |shortcut| {
-            Some(Leftover {
-                confidence: self.rate_shortcut(shortcut)?,
-                path: shortcut.path.clone(),
-            })
+            Some(Leftover::new(
+                self.rate_shortcut(shortcut)?,
+                shortcut.path.clone(),
+            ))
         })
     }
 
@@ -895,18 +921,9 @@ mod tests {
         assert_eq!(
             found,
             [
-                Leftover {
-                    path: install,
-                    confidence: Confidence::Safe
-                },
-                Leftover {
-                    path: data.join("Widget Pro"),
-                    confidence: Confidence::Moderate
-                },
-                Leftover {
-                    path: data.join("WidgetPro Cache"),
-                    confidence: Confidence::Advanced
-                },
+                Leftover::new(Confidence::Safe, install),
+                Leftover::new(Confidence::Moderate, data.join("Widget Pro")),
+                Leftover::new(Confidence::Advanced, data.join("WidgetPro Cache")),
             ]
         );
         fs::remove_dir_all(dir).unwrap();
@@ -946,10 +963,7 @@ mod tests {
             ("WidgetPro Help.lnk", Confidence::Advanced),
         ]
         .into_iter()
-        .map(|(name, confidence)| Leftover {
-            path: menu.join(name),
-            confidence,
-        })
+        .map(|(name, confidence)| Leftover::new(confidence, menu.join(name)))
         .collect();
         assert_eq!(found, expected);
         fs::remove_dir_all(dir).unwrap();
@@ -963,6 +977,20 @@ mod tests {
     }
 
     #[test]
+    fn measures_each_proposal_unless_cancelled() {
+        let dir = std::env::temp_dir()
+            .join("uninstaller-tests")
+            .join(format!("measured-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.bin"), vec![0u8; 3000]).unwrap();
+        let items = vec![Leftover::new(Confidence::Safe, dir.clone())];
+        assert!(measured(items.clone(), &AtomicBool::new(true)).is_none());
+        let sized = measured(items, &AtomicBool::new(false)).unwrap();
+        assert_eq!(sized[0].size_kib, 3);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn a_folder_above_the_install_folder_is_not_proposed() {
         let dir = std::env::temp_dir()
             .join("uninstaller-tests")
@@ -971,13 +999,7 @@ mod tests {
         fs::create_dir_all(&install).unwrap();
         let target = Target::new("Foobar", None, Some(install.clone()), vec![]);
         let found = target.scan(std::slice::from_ref(&dir));
-        assert_eq!(
-            found,
-            [Leftover {
-                path: install,
-                confidence: Confidence::Moderate
-            }]
-        );
+        assert_eq!(found, [Leftover::new(Confidence::Moderate, install)]);
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1156,10 +1178,7 @@ mod tests {
         let path = registry::test_key::fresh("clean");
         registry::Key::create(Hive::CurrentUser, &format!(r"{path}\Sub"), View::Native64).unwrap();
         let key = format!(r"HKEY_CURRENT_USER\{path}");
-        let left = |path: PathBuf| Leftover {
-            confidence: Confidence::Safe,
-            path,
-        };
+        let left = |path: PathBuf| Leftover::new(Confidence::Safe, path);
         let named = |name: String| Named {
             confidence: Confidence::Safe,
             name,

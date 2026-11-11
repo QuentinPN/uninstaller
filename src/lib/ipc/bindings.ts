@@ -215,6 +215,8 @@ export type Kind = "app" |
 export type Leftover = {
 	confidence: Confidence,
 	path: string,
+	/**  What it takes on disk, links not followed; 0 until `find` measures it. */
+	sizeKib: number,
 };
 
 /**  Why a leftover scan found nothing. */

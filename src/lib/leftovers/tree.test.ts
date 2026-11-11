@@ -6,14 +6,15 @@ import {
   groups,
   picks,
   safeIds,
+  selectedKib,
   toggle,
   toggleAll,
 } from "./tree";
 
 const FOUND: Found = {
   folders: [
-    { confidence: "safe", path: "C:Program FilesAcme" },
-    { confidence: "advanced", path: "C:UsersaAppDataRoamingAcm" },
+    { confidence: "safe", path: "C:Program FilesAcme", sizeKib: 120 },
+    { confidence: "advanced", path: "C:UsersaAppDataRoamingAcm", sizeKib: 8 },
   ],
   shortcuts: [],
   keys: [{ confidence: "safe", name: "HKEY_CURRENT_USERSoftwareAcme" }],
@@ -32,7 +33,32 @@ describe("groups", () => {
       id: "folders:1",
       label: "C:UsersaAppDataRoamingAcm",
       confidence: "advanced",
+      kib: 8,
     });
+    expect(groups(FOUND, "registry")[0]?.items[0]?.kib).toBeNull();
+  });
+
+  it("sizes the selection once, whatever sits inside a selected folder", () => {
+    const nested: Found = {
+      ...FOUND,
+      folders: [
+        { confidence: "safe", path: "C:\\Acme", sizeKib: 100 },
+        { confidence: "safe", path: "C:\\acme\\Cache", sizeKib: 40 },
+        { confidence: "safe", path: "C:\\AcmeData", sizeKib: 5 },
+      ],
+      shortcuts: [
+        { confidence: "safe", path: "C:\\Menu\\Acme.lnk", sizeKib: 1 },
+      ],
+    };
+    const all = new Set([
+      "folders:0",
+      "folders:1",
+      "folders:2",
+      "shortcuts:0",
+      "keys:0",
+    ]);
+    expect(selectedKib(nested, all)).toBe(106);
+    expect(selectedKib(nested, new Set(["folders:1"]))).toBe(40);
   });
 
   it("counts every item of a tab", () => {
