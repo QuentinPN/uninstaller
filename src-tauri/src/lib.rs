@@ -63,12 +63,7 @@ pub fn run() {
     // then batches older than the delay setting are purged (SECURITY.md 1).
     if let Some(root) = core::quarantine::root() {
         std::thread::spawn(move || {
-            core::quarantine::resume_all(&root);
-            core::quarantine::purge_expired(
-                &root,
-                core::settings::current().purge_delay(),
-                std::time::SystemTime::now(),
-            );
+            core::quarantine::settle(&root, core::settings::current().purge_delay());
         });
     }
     tauri::Builder::default()

@@ -5,9 +5,12 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+/// The app's folder name, under `%LOCALAPPDATA%` and `%ProgramData%`.
+pub const APP_DIR: &str = "Uninstaller";
+
 /// `%LOCALAPPDATA%\Uninstaller`.
 pub fn data_dir() -> Option<PathBuf> {
-    std::env::var_os("LOCALAPPDATA").map(|local| PathBuf::from(local).join("Uninstaller"))
+    std::env::var_os("LOCALAPPDATA").map(|local| PathBuf::from(local).join(APP_DIR))
 }
 
 /// Writes `bytes` and waits until they are on disk.

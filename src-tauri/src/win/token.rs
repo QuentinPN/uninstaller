@@ -1,12 +1,12 @@
 //! Access-token queries for the current process.
 
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree};
-use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Security::{
     GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TOKEN_USER, TokenElevation, TokenUser,
 };
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-use windows::core::PWSTR;
+
+use super::security;
 
 /// Whether the current process runs elevated. Any failure reads as "not elevated":
 /// callers then go through the broker, which is the safe side.
@@ -53,14 +53,7 @@ pub fn user_sid() -> Option<String> {
         // SAFETY: on success the buffer starts with a TOKEN_USER whose SID points inside
         // the buffer, which outlives every use of it below.
         let sid = unsafe { (*buffer.as_ptr().cast::<TOKEN_USER>()).User.Sid };
-        let mut text = PWSTR::null();
-        // SAFETY: `sid` is valid (above); `text` receives a LocalAlloc'd string.
-        unsafe { ConvertSidToStringSidW(sid, &mut text) }.ok()?;
-        // SAFETY: `text` is the NUL-terminated string just returned.
-        let value = unsafe { text.to_string() }.ok();
-        // SAFETY: `text` was allocated by ConvertSidToStringSidW and is freed once, here.
-        unsafe { LocalFree(Some(HLOCAL(text.0.cast()))) };
-        value
+        security::sid_string(sid)
     })
     .flatten()
 }

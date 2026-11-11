@@ -2,12 +2,14 @@
 
 pub mod com;
 pub mod dialog;
+pub mod folder;
 pub mod icon;
 pub mod pipe;
 pub mod process;
 pub mod registry;
 pub mod restore;
 pub mod scheduler;
+pub mod security;
 pub mod service;
 pub mod shortcut;
 pub mod token;

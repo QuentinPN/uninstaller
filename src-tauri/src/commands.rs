@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -55,10 +56,7 @@ pub async fn list_programs() -> Vec<Program> {
 #[tauri::command]
 #[specta::specta]
 pub async fn list_quarantine() -> Vec<BatchSummary> {
-    let delay = settings::current().purge_delay();
-    quarantine::root()
-        .map(|root| quarantine::list(&root, delay))
-        .unwrap_or_default()
+    quarantine::list(&quarantine::roots(), settings::current().purge_delay())
 }
 
 /// The saved settings, or the defaults.
@@ -76,22 +74,32 @@ pub fn save_settings(settings: Settings) -> bool {
     settings.is_valid() && settings::path().is_some_and(|path| settings.save(&path).is_ok())
 }
 
-/// Runs `action` on the batch the UI names, off the main thread. When Windows denies
-/// access (an HKLM key, a file from Program Files), the elevated broker runs it again:
-/// items already done stay done and the broker carries on from there.
+/// Runs `action` on the batch the UI names, off the main thread: the elevated broker
+/// on its part in the admin root, then the app on its own part.
 async fn on_batch(name: String, action: BatchAction) -> Result<(), BatchFailure> {
     tauri::async_runtime::spawn_blocking(move || {
-        let root = quarantine::root().ok_or(BatchFailure::Missing)?;
-        match action.run(&root, &name) {
-            Err(error) if quarantine::needs_admin(&error) => {
-                match elevated(&Request::Batch { action, name }) {
-                    Ok(Reply::Batch(result)) => result,
-                    Ok(_) => Err(BatchFailure::Failed),
-                    Err(ElevationFailure::Refused) => Err(BatchFailure::Refused),
-                    Err(ElevationFailure::Failed) => Err(BatchFailure::Failed),
-                }
+        let holds = |root: Option<PathBuf>| {
+            root.filter(|root| quarantine::batch_dir(root, &name).is_some_and(|dir| dir.exists()))
+        };
+        let (admin, own) = (holds(quarantine::admin_root()), holds(quarantine::root()));
+        if admin.is_none() && own.is_none() {
+            return Err(BatchFailure::Missing);
+        }
+        if admin.is_some() {
+            let request = Request::Batch {
+                action,
+                name: name.clone(),
+            };
+            match elevated(&request) {
+                Ok(Reply::Batch(result)) => result?,
+                Ok(_) => return Err(BatchFailure::Failed),
+                Err(ElevationFailure::Refused) => return Err(BatchFailure::Refused),
+                Err(ElevationFailure::Failed) => return Err(BatchFailure::Failed),
             }
-            done => Ok(done?),
+        }
+        match own {
+            Some(root) => Ok(action.run(&root, &name)?),
+            None => Ok(()),
         }
     })
     .await

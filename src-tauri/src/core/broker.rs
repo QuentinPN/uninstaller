@@ -16,6 +16,7 @@ use crate::core::inventory;
 use crate::core::leftovers::{self, Cleaned, Held};
 use crate::core::quarantine::{self, BatchAction, BatchFailure};
 use crate::core::registry::paths::SYSTEM_RESTORE;
+use crate::core::settings;
 use crate::win::process::{self, Process};
 use crate::win::registry::{Hive, Key, View};
 use crate::win::{pipe, restore, token};
@@ -38,8 +39,8 @@ pub enum Request {
     Ping,
     /// A system restore point named `description`, before a change (SECURITY.md 4).
     CreateRestorePoint { description: String },
-    /// Restores or purges the batch `name` of the quarantine, when the app was denied
-    /// access. A name, never a path: the broker finds the batch itself.
+    /// Restores or purges the part of the batch `name` in the admin root. A name,
+    /// never a path: the broker finds the batch itself.
     Batch { action: BatchAction, name: String },
     /// The restore points Windows keeps, for the Backups timeline.
     ListRestorePoints,
@@ -190,6 +191,13 @@ fn run(name: &str, app: u32, watch: &Watch) -> io::Result<()> {
     if pipe::server_pid(&channel)? != app {
         return Err(refused("pipe created by another process"));
     }
+    // The app cannot settle the admin root: the broker does before any request.
+    if let Some(root) = quarantine::admin_root()
+        .filter(|root| root.exists())
+        .and_then(|_| quarantine::secure_admin_root())
+    {
+        quarantine::settle(&root, settings::current().purge_delay());
+    }
     serve(&mut channel, |request| watch.busy(|| answer(request)))
 }
 
@@ -203,7 +211,7 @@ fn answer(request: Request) -> Reply {
             Reply::RestorePoint(restore_point(&description))
         }
         Request::Batch { action, name } => Reply::Batch(
-            quarantine::root()
+            quarantine::secure_admin_root()
                 .ok_or(BatchFailure::Missing)
                 .and_then(|root| Ok(action.run(&root, &name)?)),
         ),
@@ -222,7 +230,8 @@ fn answer(request: Request) -> Reply {
 fn clean_held(id: &str, batch: Option<&str>, held: &[Held]) -> Option<Cleaned> {
     let program = inventory::find(id)?;
     let found = leftovers::find(&program, &inventory::scan(), &AtomicBool::new(false))?;
-    leftovers::clean_held(&found, held, &quarantine::root()?, batch, &program.name).ok()
+    let root = quarantine::secure_admin_root()?;
+    leftovers::clean_held(&found, held, &root, batch, &program.name).ok()
 }
 
 /// The points WMI lists, newest first; a point whose date cannot be read is left out.

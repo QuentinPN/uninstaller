@@ -21,11 +21,13 @@ use super::registry::reg_file;
 use super::sizes;
 use super::store;
 use crate::win::registry::{self, Hive, Key, View};
-use crate::win::{scheduler, service};
+use crate::win::{folder, scheduler, service};
 
 const MANIFEST: &str = "manifest.json";
 /// Where moved items are kept, one entry per item, named by its index.
 const STORE: &str = "items";
+/// The quarantine's folder, under each app folder.
+const FOLDER: &str = "quarantine";
 
 #[derive(Debug)]
 pub enum Error {
@@ -210,6 +212,18 @@ pub struct Batch {
     created: u64,
     state: BatchState,
     items: Vec<Item>,
+}
+
+impl BatchSummary {
+    /// Adds `other`, the same batch's part in the other root: one cleanup, one line.
+    fn merge(&mut self, other: &Self) {
+        self.created = self.created.min(other.created);
+        self.purge_on = self.purge_on.min(other.purge_on);
+        self.files = self.files.saturating_add(other.files);
+        self.keys = self.keys.saturating_add(other.keys);
+        self.size_kib = self.size_kib.saturating_add(other.size_kib);
+        self.purging |= other.purging;
+    }
 }
 
 impl Batch {
@@ -554,14 +568,41 @@ impl Batch {
     }
 }
 
-/// `%LOCALAPPDATA%\Uninstaller\quarantine` (ARCHITECTURE.md, Données locales).
+/// `%LOCALAPPDATA%\Uninstaller\quarantine` (ARCHITECTURE.md, Données locales):
+/// what the app moves itself.
 pub fn root() -> Option<PathBuf> {
-    store::data_dir().map(|dir| dir.join("quarantine"))
+    store::data_dir().map(|dir| dir.join(FOLDER))
+}
+
+/// `%ProgramData%\Uninstaller\quarantine`: what the elevated broker moves, in a
+/// folder only administrators change (SECURITY.md 1). The app only reads it.
+pub fn admin_root() -> Option<PathBuf> {
+    folder::program_data().map(|dir| dir.join(store::APP_DIR).join(FOLDER))
+}
+
+/// `admin_root` once it and the folder above it are made, or checked, plain folders
+/// only administrators change: the broker's only way to it. None if one is not.
+pub fn secure_admin_root() -> Option<PathBuf> {
+    let root = admin_root()?;
+    folder::admin_only(root.parent()?).ok()?;
+    folder::admin_only(&root).ok()?;
+    Some(root)
+}
+
+/// Both roots, the app's first; a cleanup's batch may have a part in each.
+pub fn roots() -> Vec<PathBuf> {
+    [root(), admin_root()].into_iter().flatten().collect()
 }
 
 /// A new batch under `root` named after `label` (a program's name) made a plain folder
-/// name, with " 2", " 3"… when that name is taken.
+/// name, with " 2", " 3"… when that name is taken here or in the other root.
 pub fn create_for(root: &Path, label: &str) -> Result<Batch, Error> {
+    let others: Vec<_> = roots().into_iter().filter(|other| other != root).collect();
+    create_avoiding(root, label, &others)
+}
+
+/// `create_for`, skipping the names a batch has under one of `others`.
+fn create_avoiding(root: &Path, label: &str, others: &[PathBuf]) -> Result<Batch, Error> {
     const MAX_CHARS: usize = 60;
     const MAX_TRIES: u32 = 99;
     let plain: String = label
@@ -577,6 +618,9 @@ pub fn create_for(root: &Path, label: &str) -> Result<Batch, Error> {
         } else {
             format!("{base} {n}")
         };
+        if others.iter().any(|other| other.join(&name).exists()) {
+            continue;
+        }
         match Batch::create(root, &name) {
             Err(Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {}
             created => return created,
@@ -585,13 +629,26 @@ pub fn create_for(root: &Path, label: &str) -> Result<Batch, Error> {
     Err(io::Error::from(io::ErrorKind::AlreadyExists).into())
 }
 
-/// The batch `name` under `root` while it still takes items, else a new one named
-/// after `label`: the broker's pass of a cleanup joins the batch of the first pass.
+/// The batch `name` under `root`: reopened while it still takes items, made under
+/// that very name when absent, else a new one named after `label`. The broker's pass
+/// of a cleanup takes the name of the app's, so the Backups screen shows one batch.
 pub fn reopen_or_create(root: &Path, name: Option<&str>, label: &str) -> Result<Batch, Error> {
-    name.and_then(|name| batch_dir(root, name))
-        .and_then(|dir| Batch::open(&dir).ok())
-        .filter(|batch| batch.active().is_ok())
-        .map_or_else(|| create_for(root, label), Ok)
+    let Some((name, dir)) = name.and_then(|name| Some((name, batch_dir(root, name)?))) else {
+        return create_for(root, label);
+    };
+    match Batch::open(&dir) {
+        Ok(batch) if batch.active().is_ok() => Ok(batch),
+        Ok(_) => create_for(root, label),
+        // Absent; `create` refuses a folder that exists but cannot be read.
+        Err(_) => Batch::create(root, name).or_else(|_| create_for(root, label)),
+    }
+}
+
+/// Finishes the moves a crash interrupted under `root`, then purges the batches due
+/// (SECURITY.md 1): the app's root when it starts, the admin root when the broker does.
+pub fn settle(root: &Path, delay: Duration) {
+    resume_all(root);
+    purge_expired(root, delay, SystemTime::now());
 }
 
 /// At startup: resumes every batch under `root`. A batch that cannot be read is left
@@ -613,13 +670,21 @@ pub fn batch_dir(root: &Path, name: &str) -> Option<PathBuf> {
     plain.then(|| root.join(name))
 }
 
-/// Every batch under `root` that can be read, newest first, each purged `delay` after
-/// it was made.
-pub fn list(root: &Path, delay: Duration) -> Vec<BatchSummary> {
-    let mut batches: Vec<_> = batch_dirs(root)
+/// Every batch under `roots` that can be read, newest first, each purged `delay` after
+/// it was made; the parts of one batch in several roots make one summary.
+pub fn list(roots: &[PathBuf], delay: Duration) -> Vec<BatchSummary> {
+    let mut batches: Vec<BatchSummary> = Vec::new();
+    let parts = roots
+        .iter()
+        .flat_map(|root| batch_dirs(root))
         .filter_map(|dir| Batch::open(&dir).ok())
-        .map(|batch| batch.summary(delay))
-        .collect();
+        .map(|batch| batch.summary(delay));
+    for part in parts {
+        match batches.iter_mut().find(|batch| batch.name == part.name) {
+            Some(batch) => batch.merge(&part),
+            None => batches.push(part),
+        }
+    }
     batches.sort_by(|a, b| b.created.cmp(&a.created).then_with(|| a.name.cmp(&b.name)));
     batches
 }
@@ -908,6 +973,32 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    /// A cleanup's two passes, one per root, share one name and make one line.
+    #[test]
+    fn one_batch_across_two_roots() {
+        let dir = sandbox("roots");
+        let (own, admin) = (dir.join("own"), dir.join("admin"));
+        let mut first = create_avoiding(&own, "App", std::slice::from_ref(&admin)).unwrap();
+        first.quarantine(&dir.join("app\\app.exe")).unwrap();
+        let mut second = reopen_or_create(&admin, Some("App"), "ignored").unwrap();
+        assert_eq!(second.name(), "App");
+        second.quarantine(&dir.join("app\\data")).unwrap();
+        // A later cleanup of the same program skips the name taken in either root.
+        Batch::create(&admin, "App 2").unwrap();
+        assert_eq!(
+            create_avoiding(&own, "App", std::slice::from_ref(&admin))
+                .unwrap()
+                .name(),
+            "App 3"
+        );
+
+        let listed = list(&[own, admin], Duration::from_secs(86_400));
+        let app = listed.iter().find(|b| b.name == "App").unwrap();
+        assert_eq!(listed.len(), 3);
+        assert_eq!((app.files, app.keys, app.size_kib), (2, 0, 2));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn purges_only_expired_batches() {
         let dir = sandbox("purge");
@@ -926,7 +1017,7 @@ mod tests {
         fs::create_dir(root.join("damaged")).unwrap();
         fs::write(root.join("damaged\\manifest.json"), b"{").unwrap();
 
-        let listed = list(&root, delay);
+        let listed = list(std::slice::from_ref(&root), delay);
         assert_eq!(
             listed.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
             ["recent", "old"]
