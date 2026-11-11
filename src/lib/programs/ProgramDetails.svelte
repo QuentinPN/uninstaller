@@ -8,9 +8,11 @@ interface Props {
   /** Measured on disk; absent until computed or without an install folder. */
   diskSizeKib: number | undefined;
   onclose: () => void;
+  /** Opens the leftovers screen for this program. */
+  onleftovers: () => void;
 }
 
-let { program, diskSizeKib, onclose }: Props = $props();
+let { program, diskSizeKib, onclose, onleftovers }: Props = $props();
 
 const t = fr.programs.details;
 type Field = { label: string; value: string | null | undefined };
@@ -113,6 +115,7 @@ function openFolder() {
   {#if program.installLocation}
     <button class="action" onclick={openFolder}>{t.openFolder}</button>
   {/if}
+  <button class="action" onclick={onleftovers}>{fr.leftovers.search}</button>
   <p class="status" role="status">{status}</p>
 </aside>
 

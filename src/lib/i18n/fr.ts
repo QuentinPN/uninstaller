@@ -202,6 +202,56 @@ export const fr = {
       text: "Le dossier de quarantaine n'a pas pu être lu. Réessayez ; si cela persiste, redémarrez l'application.",
     },
   },
+  leftovers: {
+    /** In the details panel; opens the screen for that program. */
+    search: "Rechercher les restes",
+    title: "Restes",
+    back: "Retour aux programmes",
+    scanning: "Recherche des restes…",
+    scanningHint:
+      "Dossiers, raccourcis, registre, services et tâches planifiées sont lus sans rien modifier.",
+    cancel: "Annuler",
+    tabs: { files: "Fichiers", registry: "Registre" },
+    group: {
+      folders: "Dossiers",
+      shortcuts: "Raccourcis",
+      keys: "Clés de registre",
+      services: "Services",
+      tasks: "Tâches planifiées",
+    },
+    confidence: { safe: "Sûr", moderate: "Modéré", advanced: "Avancé" },
+    /** SECURITY.md 5: what each level means. */
+    confidenceHint: {
+      safe: "Plusieurs indices le rattachent à ce programme",
+      moderate: "Un seul indice le rattache à ce programme",
+      advanced: "Seule une partie du nom correspond : à vérifier",
+    },
+    selectSafe: "Tout sélectionner (sûrs)",
+    selectGroup: (group: string) => `Sélectionner : ${group}`,
+    found: (n: number) => `${n} trouvé${n > 1 ? "s" : ""}`,
+    selected: (n: number) =>
+      `${n} élément${n > 1 ? "s" : ""} sélectionné${n > 1 ? "s" : ""}`,
+    tabEmpty: "Rien dans cet onglet.",
+    empty: {
+      title: "Aucun reste trouvé",
+      text: "Aucune trace de ce programme n'a été trouvée sur le disque ni dans le registre.",
+    },
+    /** By `LeftoverFailure`. */
+    failure: {
+      cancelled: {
+        title: "Recherche annulée",
+        text: "Rien n'a été modifié.",
+      },
+      notFound: {
+        title: "Programme introuvable",
+        text: "Il ne figure plus parmi les programmes installés. Revenez à la liste pour la relire.",
+      },
+      failed: {
+        title: "La recherche a échoué",
+        text: "Réessayez ; si cela persiste, redémarrez l'application.",
+      },
+    },
+  },
   /** Screens not built yet: what will be there, and when. */
   upcoming: {
     title: "Pas encore là",

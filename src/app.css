@@ -178,6 +178,41 @@ h1 {
   color: var(--color-on-primary);
 }
 
+/* A screen's title line: the title, then its counts and notices. */
+.page-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  margin: var(--space-6) 0 var(--space-4);
+}
+.page-head h1 {
+  margin: 0;
+  font-size: var(--font-size-title);
+}
+.summary {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+/* An on/off pill: a filter, a view, a tab. */
+.toggle {
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--fill-glass);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.toggle:hover {
+  background: var(--fill-hover);
+}
+.toggle[aria-pressed="true"] {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
 /* Sizes, dates and counters line up in columns. */
 .num {
   font-variant-numeric: tabular-nums;

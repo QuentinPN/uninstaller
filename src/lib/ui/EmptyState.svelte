@@ -4,18 +4,19 @@ import { fr } from "../i18n/fr";
 interface Props {
   title: string;
   text: string;
-  /** For an error: shows "Réessayer" under the text. */
-  onretry?: () => void;
+  /** For an error: shows "Réessayer" (or `action`) under the text. */
+  onretry?: (() => void) | undefined;
+  action?: string;
 }
 
-let { title, text, onretry }: Props = $props();
+let { title, text, onretry, action = fr.common.retry }: Props = $props();
 </script>
 
 <div class="empty">
   <p class="title">{title}</p>
   <p class="text">{text}</p>
   {#if onretry}
-    <button class="retry" onclick={onretry}>{fr.common.retry}</button>
+    <button class="retry" onclick={onretry}>{action}</button>
   {/if}
 </div>
 

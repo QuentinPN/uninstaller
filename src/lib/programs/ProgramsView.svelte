@@ -10,6 +10,7 @@ import {
   type Program,
   type ProgramSize,
 } from "../ipc/bindings";
+import LeftoversView from "../leftovers/LeftoversView.svelte";
 import EmptyState from "../ui/EmptyState.svelte";
 import { EMPTY_SELECTION, type Selection } from "../ui/listNav";
 import VirtualList from "../ui/VirtualList.svelte";
@@ -206,6 +207,14 @@ function measure(current: number) {
     });
 }
 
+/** The program whose leftovers screen replaces the list, if any. */
+let leftoversOf = $state<Program | null>(null);
+
+function closeLeftovers() {
+  leftoversOf = null;
+  tick().then(() => list?.focus());
+}
+
 function closeDetails() {
   detailsOpen = false;
   list?.focus();
@@ -222,7 +231,10 @@ onMount(load);
 
 <svelte:window onafterprint={() => (printing = null)} />
 
-<header class="head">
+{#if leftoversOf}
+  <LeftoversView program={leftoversOf} onback={closeLeftovers} />
+{:else}
+<header class="page-head">
   <h1>{fr.nav.programs}</h1>
   {#if programs}
     <p class="summary num">
@@ -441,12 +453,15 @@ onMount(load);
       </div>
 {/snippet}
 {#if details}
-  <ProgramDetails program={details} diskSizeKib={sizes.get(details.id)} onclose={closeDetails} />
+  <ProgramDetails program={details} diskSizeKib={sizes.get(details.id)} onclose={closeDetails}
+    onleftovers={() => (leftoversOf = details)}
+  />
 {/if}
 {#if printing}
   <PrintSheet doc={printing} />
 {/if}
 </div>
+{/if}
 
 <style>
   .body {
@@ -461,22 +476,8 @@ onMount(load);
     flex-direction: column;
     min-width: 0;
   }
-  .head {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-4);
-    margin: var(--space-6) 0 var(--space-4);
-  }
-  h1 {
-    margin: 0;
-    font-size: var(--font-size-title);
-  }
   .chosen {
     color: var(--color-accent);
-  }
-  .summary {
-    margin: 0;
-    color: var(--color-text-secondary);
   }
   .toolbar {
     display: flex;
@@ -498,8 +499,7 @@ onMount(load);
     color: var(--color-text-muted);
   }
   .menu-button,
-  .menu-item,
-  .toggle {
+  .menu-item {
     white-space: nowrap;
   }
   .toggles {
@@ -508,22 +508,6 @@ onMount(load);
   }
   .push {
     margin-left: auto;
-  }
-  .toggle {
-    padding: var(--space-1) var(--space-3);
-    border: none;
-    border-radius: var(--radius-pill);
-    background: var(--fill-glass);
-    color: var(--color-text-secondary);
-    font-size: var(--font-size-sm);
-    cursor: pointer;
-  }
-  .toggle:hover {
-    background: var(--fill-hover);
-  }
-  .toggle[aria-pressed="true"] {
-    background: var(--color-primary);
-    color: var(--color-on-primary);
   }
   .list-host {
     display: flex;

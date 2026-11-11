@@ -82,7 +82,7 @@ Côté broker, un tube créé par un autre processus que son parent donne le cod
 
 ### 2. Scan des restes
 
-Tranches 1 à 5 : `leftovers::Target::scan`, `shortcuts`, `keys`, `services` et `tasks` sont des fonctions pures de lecture (aucun état, aucune écriture) ; relancer est toujours sûr. Tranche 6 : un scan à la fois. `scan_leftovers` : en cours → terminé (`Found`) ; `cancel_leftovers` ou un nouveau scan lève le drapeau du scan en cours → annulé (`cancelled`, vérifié avant chaque type de reste, le type en cours se termine) ; programme absent → `notFound`. Les états de l'écran (choix, mise en quarantaine) arrivent avec lui.
+Tranches 1 à 5 : `leftovers::Target::scan`, `shortcuts`, `keys`, `services` et `tasks` sont des fonctions pures de lecture (aucun état, aucune écriture) ; relancer est toujours sûr. Tranche 6 : un scan à la fois. `scan_leftovers` : en cours → terminé (`Found`) ; `cancel_leftovers` ou un nouveau scan lève le drapeau du scan en cours → annulé (`cancelled`, vérifié avant chaque type de reste, le type en cours se termine) ; programme absent → `notFound`. Tranche 7, écran : en cours (« Annuler » → `cancel_leftovers`) → terminé (sûrs présélectionnés ; choix libre) | rien trouvé | annulé, échec (« Réessayer » relance) | introuvable (retour seulement). Une réponse d'un scan antérieur (relancé, ou écran quitté) est ignorée ; quitter l'écran pendant le scan l'annule. La mise en quarantaine arrive avec la tranche suivante.
 
 ### 4. Session de suivi d'installation · 5. Mode Chasseur
 

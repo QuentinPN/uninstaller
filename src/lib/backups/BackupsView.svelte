@@ -144,7 +144,7 @@ onMount(() => {
 });
 </script>
 
-<header class="head">
+<header class="page-head">
   <h1>{fr.nav.backups}</h1>
   {#if batches?.length}
     <p class="summary num">
@@ -261,19 +261,7 @@ onMount(() => {
 {/if}
 
 <style>
-  .head {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-4);
-    margin: var(--space-6) 0 var(--space-4);
-  }
-  h1 {
-    margin: 0;
-    font-size: var(--font-size-title);
-  }
   .summary {
-    margin: 0;
-    color: var(--color-text-secondary);
     white-space: nowrap;
   }
   .notice {
