@@ -65,6 +65,15 @@ function isFailure(outcome: Outcome): outcome is UninstallFailure {
   return outcome in t.failure;
 }
 
+/** No uninstaller could run: forced, its leftovers and its entry are searched (F6). */
+function forcible(outcome: Outcome) {
+  return (
+    outcome === "missing" ||
+    outcome === "noUninstaller" ||
+    outcome === "unsupported"
+  );
+}
+
 /** The uninstaller started, so its leftovers are worth a search. */
 function started(outcome: Outcome) {
   return (
@@ -186,6 +195,7 @@ $effect(() => {
       <p class="hint">{stopping ? t.queueStopping : t.runningHint}</p>
     {:else if stage.state === "failed"}
       <p class="failed">{t.failure[stage.failure]}</p>
+      {#if forcible(stage.failure)}<p class="hint">{t.forceHint}</p>{/if}
     {:else if stage.state === "stillListed"}
       <p>{t.stillListed(first.name)}</p>
     {:else}
@@ -200,9 +210,9 @@ $effect(() => {
                 {isFailure(outcome) ? t.failure[outcome] : t.outcome[outcome]}
               </span>
             </div>
-            {#if started(outcome)}
+            {#if started(outcome) || forcible(outcome)}
               <button class="action" onclick={() => onleftovers(program)}>
-                {fr.leftovers.search}
+                {started(outcome) ? fr.leftovers.search : t.force}
               </button>
             {/if}
           </li>
@@ -230,6 +240,8 @@ $effect(() => {
       <button class="action" use:autofocus onclick={close}>{t.close}</button>
       {#if stage.failure === "refused"}
         <button class="action primary" onclick={retry}>{fr.common.retry}</button>
+      {:else if forcible(stage.failure)}
+        <button class="action primary" onclick={() => onleftovers(first)}>{t.force}</button>
       {/if}
     {:else if stage.state === "stillListed"}
       <button class="action" use:autofocus onclick={close}>{t.close}</button>

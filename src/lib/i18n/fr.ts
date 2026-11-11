@@ -324,7 +324,7 @@ export const fr = {
       "Les programmes suivants ne seront pas désinstallés : la file s'arrête après celui-ci.",
     summaryLabel: "Bilan de la désinstallation",
     summaryHint:
-      "Recherchez les restes de chaque programme dont le désinstalleur s'est ouvert.",
+      "Recherchez les restes de chaque programme dont le désinstalleur s'est ouvert, ou forcez la désinstallation de celui qui n'en a pas.",
     /** In the batch summary, besides the failures. */
     outcome: {
       done: "Désinstallé",
@@ -332,6 +332,9 @@ export const fr = {
       stillListed: "Toujours installé",
       skipped: "Non lancé",
     },
+    force: "Forcer la désinstallation",
+    forceHint:
+      "La désinstallation forcée recherche ses restes, son entrée dans la liste comprise. Ce que vous retirez part en quarantaine.",
     stillListed: (name: string) =>
       `${name} figure toujours parmi les programmes installés : sa désinstallation a peut-être été annulée.`,
     /** By `UninstallFailure`. */
@@ -341,8 +344,7 @@ export const fr = {
       noUninstaller: "Ce programme ne déclare aucun désinstalleur.",
       unsupported:
         "La commande de désinstallation de ce programme n'est pas encore prise en charge : elle ne nomme pas son programme par un chemin complet.",
-      missing:
-        "Le désinstalleur de ce programme n'est plus sur le disque. Ses restes peuvent être recherchés depuis le panneau de détails.",
+      missing: "Le désinstalleur de ce programme n'est plus sur le disque.",
       refused: "Autorisation administrateur refusée : rien n'a été lancé.",
       failed: "Windows n'a pas pu lancer le désinstalleur.",
     },

@@ -145,7 +145,9 @@ pub fn find(program: &Program, all: &[Program], cancelled: &AtomicBool) -> Optio
     go()?;
     let shortcuts = measured(target.shortcuts(&shortcuts(&shortcut_roots())), cancelled)?;
     go()?;
-    let keys = target.keys(&paths::SOFTWARE_ROOTS);
+    let mut keys = target.keys(&paths::SOFTWARE_ROOTS);
+    keys.extend(entry(program, all));
+    keys.sort();
     go()?;
     let services = target.services(&services());
     go()?;
@@ -157,6 +159,26 @@ pub fn find(program: &Program, all: &[Program], cancelled: &AtomicBool) -> Optio
         keys,
         services,
         tasks,
+    })
+}
+
+/// The program's own Uninstall entry while it is still listed (F6, forced uninstall):
+/// surest when its uninstaller is gone, else only if the user picks it, since its
+/// uninstaller may still be wanted. Gone once the uninstaller has removed it.
+fn entry(program: &Program, all: &[Program]) -> Option<Named> {
+    let listed = all.iter().find(|p| p.id == program.id)?;
+    let (hive, path) = Hive::parse(&listed.registry_key)?;
+    if protect::is_protected_key(hive, path) {
+        return None;
+    }
+    let confidence = if listed.orphan {
+        Confidence::Safe
+    } else {
+        Confidence::Moderate
+    };
+    Some(Named {
+        confidence,
+        name: listed.registry_key.clone(),
     })
 }
 
@@ -872,6 +894,42 @@ mod tests {
     use super::*;
     use crate::core::test_support::junction;
     use crate::win::registry;
+
+    #[test]
+    fn a_listed_program_offers_its_own_uninstall_entry() {
+        const ENTRY: &str =
+            r"HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Widget";
+        let mut widget = inventory::tests::program("widget", None);
+        widget.registry_key = ENTRY.into();
+        assert_eq!(entry(&widget, &[]), None, "no longer listed");
+        let named = |confidence| {
+            Some(Named {
+                confidence,
+                name: ENTRY.into(),
+            })
+        };
+        assert_eq!(
+            entry(&widget, std::slice::from_ref(&widget)),
+            named(Confidence::Moderate)
+        );
+        widget.orphan = true;
+        assert_eq!(
+            entry(&widget, std::slice::from_ref(&widget)),
+            named(Confidence::Safe)
+        );
+        for refused in [
+            r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft",
+            "",
+            r"HKEY_CLASSES_ROOT\X",
+        ] {
+            widget.registry_key = refused.into();
+            assert_eq!(
+                entry(&widget, std::slice::from_ref(&widget)),
+                None,
+                "{refused}"
+            );
+        }
+    }
 
     #[test]
     fn keys_keep_what_names_the_product() {
