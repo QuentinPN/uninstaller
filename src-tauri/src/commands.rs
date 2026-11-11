@@ -149,16 +149,37 @@ static BROKER: Mutex<Option<Client>> = Mutex::new(None);
 /// Sends `request` to the elevated broker, starting it (UAC prompt) when none runs.
 /// A failed call ends the session, so the next request starts a new one.
 fn elevated(request: &Request) -> Result<Reply, ElevationFailure> {
-    let mut session = BROKER.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut session = broker();
     let client = match session.take().filter(Client::is_alive) {
         Some(client) => client,
         None => Client::start()?,
     };
+    call(&mut session, client, request)
+}
+
+/// Sends `request` only to a broker already running and idle: never a UAC prompt,
+/// never a wait behind another elevated call.
+fn running_broker(request: &Request) -> Option<Reply> {
+    let mut session = BROKER.try_lock().ok()?;
+    let client = session.take().filter(Client::is_alive)?;
+    call(&mut session, client, request).ok()
+}
+
+/// A failed call ends the session.
+fn call(
+    session: &mut Option<Client>,
+    client: Client,
+    request: &Request,
+) -> Result<Reply, ElevationFailure> {
     let reply = session.insert(client).call(request);
     if reply.is_err() {
         *session = None;
     }
     Ok(reply?)
+}
+
+fn broker() -> std::sync::MutexGuard<'static, Option<Client>> {
+    BROKER.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// The name Windows shows for points made from the Backups screen.
@@ -370,6 +391,11 @@ pub async fn run_uninstaller(id: String) -> Result<Uninstalled, UninstallFailure
     tauri::async_runtime::spawn_blocking(move || {
         let program = inventory::find(&id).ok_or(UninstallFailure::NotFound)?;
         *uninstalled() = Some(program.clone());
+        // The broker's leftover pass needs the program once its entry is gone. Only a
+        // broker already running (after the restore point) is told: no extra prompt.
+        running_broker(&Request::Remember {
+            program: id.clone(),
+        });
         uninstall::run(&program, &stop)
     })
     .await
@@ -556,6 +582,13 @@ pub fn app_info() -> AppInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// No broker runs in the unit tests: `running_broker` must not start one.
+    #[test]
+    fn only_a_running_broker_is_told() {
+        assert!(running_broker(&Request::Ping).is_none());
+        assert!(broker().is_none());
+    }
 
     #[test]
     fn new_work_or_a_stop_raises_the_running_one_s_flag() {
