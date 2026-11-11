@@ -98,15 +98,21 @@ impl Program {
 
 /// The program file a command line runs, when it names one by full path.
 pub fn command_program(command: &str) -> Option<PathBuf> {
+    split_command(command).map(|(program, _)| program)
+}
+
+/// A command line as the program file it names by full path and the arguments after.
+pub fn split_command(command: &str) -> Option<(PathBuf, &str)> {
     let command = command.trim();
-    let path = match command.strip_prefix('"') {
-        Some(rest) => rest.split('"').next()?,
+    let (path, arguments) = match command.strip_prefix('"') {
+        Some(rest) => rest.split_once('"').unwrap_or((rest, "")),
         // Unquoted, maybe with spaces: up to the first ".exe" (ASCII lowercasing keeps
         // byte offsets).
-        None => &command[..command.to_ascii_lowercase().find(".exe")? + 4],
+        None => command.split_at(command.to_ascii_lowercase().find(".exe")? + 4),
     };
     let path = Path::new(path);
-    (path.is_absolute() && !path.to_string_lossy().contains('%')).then(|| path.to_path_buf())
+    (path.is_absolute() && !path.to_string_lossy().contains('%'))
+        .then(|| (path.to_path_buf(), arguments.trim()))
 }
 
 /// Values of one Uninstall subkey; implemented by `win::registry::Key` and by test fakes.
@@ -413,6 +419,10 @@ pub(crate) mod tests {
         assert_eq!(
             exe(r"C:\Program Files\App\Uninstall.EXE /S").as_deref(),
             Some(r"C:\Program Files\App\Uninstall.EXE")
+        );
+        assert_eq!(
+            split_command(r#""C:\App\u.exe /S"#),
+            Some((PathBuf::from(r"C:\App\u.exe /S"), ""))
         );
         for unknown in [
             "MsiExec.exe /X{GUID}",

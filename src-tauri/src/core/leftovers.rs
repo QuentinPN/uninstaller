@@ -1375,7 +1375,6 @@ mod tests {
     #[test]
     #[ignore = "fixture : installe UninstallerFixture pour l'utilisateur courant"]
     fn the_fixture_leftovers_go_to_quarantine_and_come_back() {
-        use std::os::windows::process::CommandExt;
         const NAME: &str = "UninstallerFixture";
         const KEY: &str = r"Software\UninstallerFixture";
         const TASK: &str = r"\UninstallerTest";
@@ -1385,13 +1384,8 @@ mod tests {
             .into_iter()
             .find(|p| p.name == NAME)
             .expect("listed once installed");
-        let uninstall = program.uninstall_string.clone().unwrap();
-        let ran = std::process::Command::new("cmd")
-            .arg("/C")
-            .raw_arg(&uninstall)
-            .status()
-            .unwrap();
-        assert!(ran.success());
+        let ran = crate::core::uninstall::run(&program, &AtomicBool::new(false)).unwrap();
+        assert_eq!((ran.exit_code, ran.finished), (Some(0), true));
         let all = inventory::scan();
         assert!(all.iter().all(|p| p.name != NAME));
 

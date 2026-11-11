@@ -23,7 +23,7 @@ $entry.SetValue('Publisher', 'Uninstaller Fixture Labs')
 $entry.SetValue('InstallLocation', $Install)
 $entry.SetValue('DisplayIcon', $Exe)
 $entry.SetValue('UninstallString',
-    "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$Install\uninstall.ps1`"")
+    "`"$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -ExecutionPolicy Bypass -File `"$Install\uninstall.ps1`"")
 $entry.SetValue('EstimatedSize', 64, [Microsoft.Win32.RegistryValueKind]::DWord)
 $entry.SetValue('NoModify', 1, [Microsoft.Win32.RegistryValueKind]::DWord)
 $entry.Close()

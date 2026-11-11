@@ -7,7 +7,7 @@
 3. **Liens et jonctions** : jamais suivis pendant un scan ou une suppression (`FILE_ATTRIBUTE_REPARSE_POINT` ignoré, la jonction elle-même seule peut être retirée).
 4. **Point de restauration** avant toute désinstallation ou lot (`SRSetRestorePointW` dans le broker, `win/restore.rs`). Attention : Windows limite à un point par 24 h par défaut (`SystemRestorePointCreationFrequency`) ; détecté par `LastIndex` inchangé (réponse `Skipped`), à signaler, ne pas échouer en silence.
 5. **Confiance des restes** : un élément n'est « sûr » que s'il est rattaché au programme par au moins deux indices indépendants (dossier d'installation, éditeur, nom de produit, GUID MSI, chemin d'exécutable). Mode Sûr = uniquement ces éléments.
-6. **Désinstalleurs natifs** : la chaîne de désinstallation est analysée (exécutable + arguments), exécutée sans shell (`CreateProcessW`, pas de `cmd /c`), avec vérification que l'exécutable existe ; `MsiExec` reconnu et appelé avec le GUID validé.
+6. **Désinstalleurs natifs** : la chaîne de désinstallation est analysée (exécutable + arguments), exécutée sans shell (`CreateProcessW`, pas de `cmd /c`), avec vérification que l'exécutable existe ; seul un programme nommé par chemin complet, sans variable `%…%`, est lancé ; un désinstalleur qui exige l'administrateur (erreur 740) passe par l'invite UAC (`ShellExecuteExW` « runas »), refus → `Refused` ; entrée Windows Installer : `%SystemRoot%\System32\msiexec.exe /X{GUID}`, GUID tiré du nom de la clé et validé, `UninstallString` ignorée. L'attente suit l'arbre des processus lancés (poignées gardées ouvertes pour qu'aucun identifiant ne soit réutilisé, enfant plus jeune que son parent) et peut être arrêtée sans tuer le désinstalleur.
 
 ## Surface d'attaque
 

@@ -14,7 +14,9 @@ Invariants : une seule tâche active par programme ; rien n'est supprimé avant 
 |----|-----------|------|-------|
 | Idle | start | RestorePoint | programme pas déjà en cours |
 | RestorePoint | ok / skipped(limite 24 h, accepté) | NativeUninstaller | |
-| NativeUninstaller | exit | AwaitingScan | code de sortie journalisé |
+| NativeUninstaller | exit (lui et tout ce qu'il a lancé) | AwaitingScan | code de sortie journalisé |
+| NativeUninstaller | stop (attente arrêtée, désinstalleur laissé) | AwaitingScan | `finished` faux |
+| NativeUninstaller | refused (invite UAC) / notFound / noUninstaller / unsupported / missing / failed | Failed | rien n'a été lancé |
 | AwaitingScan | scan(mode) | Scanning | |
 | Scanning | done | AwaitingSelection | |
 | AwaitingSelection | confirm(sélection non vide) | Quarantining | sélection ∩ protégés = ∅ |

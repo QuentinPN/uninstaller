@@ -18,6 +18,7 @@ use crate::core::leftovers::{self, Cleaned, Found, Held, Pick};
 use crate::core::quarantine::{self, BatchAction, BatchFailure, BatchSummary};
 use crate::core::settings::{self, Settings};
 use crate::core::sizes::{self, ProgramSize};
+use crate::core::uninstall::{self, UninstallFailure, Uninstalled};
 use crate::win::dialog::{self, SaveAs};
 use crate::win::process;
 
@@ -269,6 +270,9 @@ pub async fn compute_sizes(on_sizes: Channel<Vec<ProgramSize>>) {
 /// The leftover scan running, if any: `cancel_leftovers` or the next scan stops it.
 static LEFTOVER_SCAN: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
 
+/// Raised to stop waiting for the uninstaller started last.
+static UNINSTALL_WAIT: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+
 /// The last scan that answered, for `quarantine_leftovers` to read the picks from: the
 /// UI sends back places in it, never paths.
 static LAST_LEFTOVERS: Mutex<Option<Scanned>> = Mutex::new(None);
@@ -318,7 +322,7 @@ pub enum LeftoverFailure {
 #[tauri::command]
 #[specta::specta]
 pub async fn scan_leftovers(id: String) -> Result<Scan, LeftoverFailure> {
-    let cancelled = start_leftover_scan();
+    let cancelled = fresh_flag(&LEFTOVER_SCAN);
     tauri::async_runtime::spawn_blocking(move || {
         let program = inventory::find(&id).ok_or(LeftoverFailure::NotFound)?;
         let all = inventory::scan();
@@ -346,9 +350,30 @@ pub async fn scan_leftovers(id: String) -> Result<Scan, LeftoverFailure> {
 #[tauri::command]
 #[specta::specta]
 pub fn cancel_leftovers() {
-    if let Some(scan) = leftover_scan().take() {
-        scan.store(true, Ordering::Relaxed);
-    }
+    raise_flag(&LEFTOVER_SCAN);
+}
+
+/// Runs the uninstaller of the program `id` names (F4, step 2) and answers once it and
+/// all it started have ended, or `stop_uninstaller` was called. Starting another stops
+/// the wait for the previous one, which keeps running.
+#[tauri::command]
+#[specta::specta]
+pub async fn run_uninstaller(id: String) -> Result<Uninstalled, UninstallFailure> {
+    let stop = fresh_flag(&UNINSTALL_WAIT);
+    tauri::async_runtime::spawn_blocking(move || {
+        let program = inventory::find(&id).ok_or(UninstallFailure::NotFound)?;
+        uninstall::run(&program, &stop)
+    })
+    .await
+    .unwrap_or(Err(UninstallFailure::Failed))
+}
+
+/// Stops waiting for the uninstaller (one that opened a browser page, say): its
+/// `run_uninstaller` answers with `finished` false. The uninstaller is left running.
+#[tauri::command]
+#[specta::specta]
+pub fn stop_uninstaller() {
+    raise_flag(&UNINSTALL_WAIT);
 }
 
 /// Why picked leftovers were not moved.
@@ -427,17 +452,28 @@ fn last_leftovers() -> std::sync::MutexGuard<'static, Option<Scanned>> {
         .unwrap_or_else(PoisonError::into_inner)
 }
 
-/// A fresh cancel flag for a new scan, the previous scan's flag raised.
-fn start_leftover_scan() -> Arc<AtomicBool> {
-    let cancelled = Arc::new(AtomicBool::new(false));
-    if let Some(previous) = leftover_scan().replace(Arc::clone(&cancelled)) {
-        previous.store(true, Ordering::Relaxed);
-    }
-    cancelled
+type Flag = Mutex<Option<Arc<AtomicBool>>>;
+
+/// A fresh stop flag for new work in `slot`, the previous work's flag raised.
+fn fresh_flag(slot: &Flag) -> Arc<AtomicBool> {
+    let flag = Arc::new(AtomicBool::new(false));
+    raise(
+        slot.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .replace(Arc::clone(&flag)),
+    );
+    flag
 }
 
-fn leftover_scan() -> std::sync::MutexGuard<'static, Option<Arc<AtomicBool>>> {
-    LEFTOVER_SCAN.lock().unwrap_or_else(PoisonError::into_inner)
+/// Raises and forgets the flag of the work running in `slot`.
+fn raise_flag(slot: &Flag) {
+    raise(slot.lock().unwrap_or_else(PoisonError::into_inner).take());
+}
+
+fn raise(flag: Option<Arc<AtomicBool>>) {
+    if let Some(flag) = flag {
+        flag.store(true, Ordering::Relaxed);
+    }
 }
 
 /// File types of a list export (F19).
@@ -510,14 +546,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_new_leftover_scan_or_cancel_stops_the_running_one() {
-        let first = start_leftover_scan();
-        let second = start_leftover_scan();
+    fn new_work_or_a_stop_raises_the_running_one_s_flag() {
+        let slot = Flag::default();
+        let first = fresh_flag(&slot);
+        let second = fresh_flag(&slot);
         assert!(first.load(Ordering::Relaxed));
         assert!(!second.load(Ordering::Relaxed));
-        cancel_leftovers();
+        raise_flag(&slot);
         assert!(second.load(Ordering::Relaxed));
-        assert!(leftover_scan().is_none());
+        assert!(slot.lock().unwrap().is_none());
     }
 
     #[test]

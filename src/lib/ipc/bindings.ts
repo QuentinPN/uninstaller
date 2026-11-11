@@ -75,6 +75,17 @@ export const commands = {
 	 */
 	quarantineHeldLeftovers: () => typedError<Cleaned_Serialize, ElevationFailure>(__TAURI_INVOKE("quarantine_held_leftovers")),
 	/**
+	 *  Runs the uninstaller of the program `id` names (F4, step 2) and answers once it and
+	 *  all it started have ended, or `stop_uninstaller` was called. Starting another stops
+	 *  the wait for the previous one, which keeps running.
+	 */
+	runUninstaller: (id: string) => typedError<Uninstalled_Serialize, UninstallFailure>(__TAURI_INVOKE("run_uninstaller", { id })),
+	/**
+	 *  Stops waiting for the uninstaller (one that opened a browser page, say): its
+	 *  `run_uninstaller` answers with `finished` false. The uninstaller is left running.
+	 */
+	stopUninstaller: () => __TAURI_INVOKE<void>("stop_uninstaller"),
+	/**
 	 *  Opens a program's install folder in Explorer. Takes the opaque id, never a path:
 	 *  the folder is read back from the registry. False if it no longer exists.
 	 */
@@ -353,6 +364,46 @@ export type SystemPoint = {
 	description: string,
 	/**  Seconds since the Unix epoch. */
 	created: number,
+};
+
+/**  Why the uninstaller did not run. */
+export type UninstallFailure = 
+/**  The id names no installed program. */
+"notFound" | 
+/**  Its entry names no uninstaller. */
+"noUninstaller" | 
+/**  Its command names no program file by full path, nor a valid MSI product code. */
+"unsupported" | 
+/**  The program file it names is gone from the disk. */
+"missing" | 
+/**  It asked for the administrator and the UAC prompt was declined. */
+"refused" | 
+/**  Windows would not start it. */
+"failed";
+
+/**  How the uninstaller ended. */
+export type Uninstalled = Uninstalled_Serialize | Uninstalled_Deserialize;
+
+/**  How the uninstaller ended. */
+export type Uninstalled_Deserialize = {
+	/**
+	 *  Its exit code, kept for the record: installers give codes different meanings.
+	 *  None while it still runs.
+	 */
+	exitCode?: number | null,
+	/**  False when the wait was stopped before it and all it started had ended. */
+	finished: boolean,
+};
+
+/**  How the uninstaller ended. */
+export type Uninstalled_Serialize = {
+	/**
+	 *  Its exit code, kept for the record: installers give codes different meanings.
+	 *  None while it still runs.
+	 */
+	exitCode: number | null,
+	/**  False when the wait was stopped before it and all it started had ended. */
+	finished: boolean,
 };
 
 /* Tauri Specta runtime */

@@ -23,3 +23,4 @@ pub mod sizes;
 pub mod store;
 #[cfg(test)]
 mod test_support;
+pub mod uninstall;
