@@ -111,10 +111,6 @@ const SHARED_KEYS: [&str; 18] = [
 /// True for a hive or an account root, anything outside `SOFTWARE` (`SYSTEM`, hardware,
 /// security, the user's settings), `SOFTWARE` itself, a key in `SHARED_KEYS` or one of
 /// its parents, or a malformed path (empty part, leading or trailing separator).
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "Phase 2: tested now, called by the next slices")
-)]
 pub fn is_protected_key(hive: Hive, path: &str) -> bool {
     let path = path.to_lowercase();
     let mut parts: Vec<&str> = path.split('\\').collect();

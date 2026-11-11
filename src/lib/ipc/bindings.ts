@@ -57,6 +57,13 @@ export const commands = {
 	 */
 	computeSizes: (onSizes: Channel<ProgramSize[]>) => __TAURI_INVOKE<void>("compute_sizes", { onSizes }),
 	/**
+	 *  Leftovers of the program `id` names (F5), read only, off the async runtime. A new
+	 *  scan stops the one running.
+	 */
+	scanLeftovers: (id: string) => typedError<Found, LeftoverFailure>(__TAURI_INVOKE("scan_leftovers", { id })),
+	/**  Stops the leftover scan running; its `scan_leftovers` answers `Cancelled`. */
+	cancelLeftovers: () => __TAURI_INVOKE<void>("cancel_leftovers"),
+	/**
 	 *  Opens a program's install folder in Explorer. Takes the opaque id, never a path:
 	 *  the folder is read back from the registry. False if it no longer exists.
 	 */
@@ -111,6 +118,18 @@ export type BatchSummary = {
 	purging: boolean,
 };
 
+/**
+ *  How surely a folder belongs to the program (SECURITY.md 5). Ordered from the
+ *  surest: the Safe depth keeps `Safe`, Moderate adds `Moderate`, Advanced adds all.
+ */
+export type Confidence = 
+/**  At least two independent signals: install folder, product name, publisher. */
+"safe" | 
+/**  One signal: the install folder, or a folder named exactly after the product. */
+"moderate" | 
+/**  Only part of the name matches; never preselected. */
+"advanced";
+
 /**  Why an elevated operation did not run. */
 export type ElevationFailure = 
 /**  The UAC prompt was refused: nothing changed. */
@@ -133,12 +152,43 @@ export type Export = {
 /**  File types of a list export (F19). */
 export type ExportFormat = "html" | "csv" | "txt";
 
+/**  Everything a program may have left, by kind, each list surest first. */
+export type Found = {
+	folders: Leftover[],
+	shortcuts: Leftover[],
+	keys: Named[],
+	services: Named[],
+	tasks: Named[],
+};
+
 /**  What the entry is. Only `App` is shown by default (F1). */
 export type Kind = "app" | 
 /**  `SystemComponent = 1`: hidden by its installer. */
 "systemComponent" | 
 /**  An update or hotfix attached to another product. */
 "update";
+
+/**  Ordered surest first, then by path. */
+export type Leftover = {
+	confidence: Confidence,
+	path: string,
+};
+
+/**  Why a leftover scan found nothing. */
+export type LeftoverFailure = 
+/**  The id names no installed program. */
+"notFound" | "cancelled" | 
+/**  The scan stopped on an unexpected error. */
+"failed";
+
+/**
+ *  A registry key as regedit shows it (`HKEY_CURRENT_USER\Software\Acme\Widget`), a
+ *  service's name or a scheduled task's path; ordered surest first, then by name.
+ */
+export type Named = {
+	confidence: Confidence,
+	name: string,
+};
 
 export type Program = Program_Serialize | Program_Deserialize;
 

@@ -7,6 +7,10 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use serde::Serialize;
+use specta::Type;
 
 use crate::core::inventory::{self, Program};
 use crate::core::protect;
@@ -16,7 +20,8 @@ use crate::win::{icon, scheduler, shortcut};
 
 /// How surely a folder belongs to the program (SECURITY.md 5). Ordered from the
 /// surest: the Safe depth keeps `Safe`, Moderate adds `Moderate`, Advanced adds all.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
 pub enum Confidence {
     /// At least two independent signals: install folder, product name, publisher.
     Safe,
@@ -27,7 +32,7 @@ pub enum Confidence {
 }
 
 /// Ordered surest first, then by path.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Type)]
 pub struct Leftover {
     pub confidence: Confidence,
     pub path: PathBuf,
@@ -35,7 +40,7 @@ pub struct Leftover {
 
 /// A registry key as regedit shows it (`HKEY_CURRENT_USER\Software\Acme\Widget`), a
 /// service's name or a scheduled task's path; ordered surest first, then by name.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Type)]
 pub struct Named {
     pub confidence: Confidence,
     pub name: String,
@@ -102,6 +107,41 @@ const COMPANY_WORDS: [&str; 17] = [
     "srl",
     "sarl",
 ];
+
+/// Everything a program may have left, by kind, each list surest first.
+#[derive(Debug, Serialize, Type)]
+pub struct Found {
+    pub folders: Vec<Leftover>,
+    pub shortcuts: Vec<Leftover>,
+    pub keys: Vec<Named>,
+    pub services: Vec<Named>,
+    pub tasks: Vec<Named>,
+}
+
+/// Scans every kind of leftover of `program` among `all` the installed programs, read
+/// only. `None` once `cancelled` turns true, checked before each kind.
+pub fn find(program: &Program, all: &[Program], cancelled: &AtomicBool) -> Option<Found> {
+    let target = Target::of(program, all);
+    let go = || (!cancelled.load(Ordering::Relaxed)).then_some(());
+    go()?;
+    let folders = target.scan(&roots());
+    go()?;
+    let shortcuts = target.shortcuts(&shortcuts(&shortcut_roots()));
+    go()?;
+    let keys = target.keys(&paths::SOFTWARE_ROOTS);
+    go()?;
+    let services = target.services(&services());
+    go()?;
+    let tasks = target.tasks(&scheduled_tasks());
+    go()?;
+    Some(Found {
+        folders,
+        shortcuts,
+        keys,
+        services,
+        tasks,
+    })
+}
 
 impl Target {
     pub fn new(
@@ -893,6 +933,16 @@ mod tests {
         };
         let target = Target::new("Widget Pro", None, None, vec![]);
         assert!(target.shortcuts(&[shortcut]).is_empty());
+    }
+
+    #[test]
+    fn a_cancelled_scan_stops_and_a_full_one_answers() {
+        let program = crate::core::inventory::tests::program("Qpn Absent Widget", None);
+        assert!(find(&program, &[], &AtomicBool::new(true)).is_none());
+        let found = find(&program, &[], &AtomicBool::new(false)).unwrap();
+        let kinds = [found.folders.len(), found.shortcuts.len(), found.keys.len()];
+        assert_eq!(kinds, [0; 3]);
+        assert!(found.services.is_empty() && found.tasks.is_empty());
     }
 
     #[test]

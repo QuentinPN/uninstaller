@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::io::Write;
 use std::process::Command;
-use std::sync::{Mutex, PoisonError};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -12,6 +13,7 @@ use tauri::ipc::Channel;
 
 use crate::core::broker::{Client, Reply, Request, RestorePoint, SystemPoint};
 use crate::core::inventory::{self, Program};
+use crate::core::leftovers::{self, Found};
 use crate::core::quarantine::{self, BatchAction, BatchFailure, BatchSummary};
 use crate::core::settings::{self, Settings};
 use crate::core::sizes::{self, ProgramSize};
@@ -256,6 +258,57 @@ pub async fn compute_sizes(on_sizes: Channel<Vec<ProgramSize>>) {
     .await;
 }
 
+/// The leftover scan running, if any: `cancel_leftovers` or the next scan stops it.
+static LEFTOVER_SCAN: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+
+/// Why a leftover scan found nothing.
+#[derive(Debug, PartialEq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum LeftoverFailure {
+    /// The id names no installed program.
+    NotFound,
+    Cancelled,
+    /// The scan stopped on an unexpected error.
+    Failed,
+}
+
+/// Leftovers of the program `id` names (F5), read only, off the async runtime. A new
+/// scan stops the one running.
+#[tauri::command]
+#[specta::specta]
+pub async fn scan_leftovers(id: String) -> Result<Found, LeftoverFailure> {
+    let cancelled = start_leftover_scan();
+    tauri::async_runtime::spawn_blocking(move || {
+        let program = inventory::find(&id).ok_or(LeftoverFailure::NotFound)?;
+        let all = inventory::scan();
+        leftovers::find(&program, &all, &cancelled).ok_or(LeftoverFailure::Cancelled)
+    })
+    .await
+    .unwrap_or(Err(LeftoverFailure::Failed))
+}
+
+/// Stops the leftover scan running; its `scan_leftovers` answers `Cancelled`.
+#[tauri::command]
+#[specta::specta]
+pub fn cancel_leftovers() {
+    if let Some(scan) = leftover_scan().take() {
+        scan.store(true, Ordering::Relaxed);
+    }
+}
+
+/// A fresh cancel flag for a new scan, the previous scan's flag raised.
+fn start_leftover_scan() -> Arc<AtomicBool> {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    if let Some(previous) = leftover_scan().replace(Arc::clone(&cancelled)) {
+        previous.store(true, Ordering::Relaxed);
+    }
+    cancelled
+}
+
+fn leftover_scan() -> std::sync::MutexGuard<'static, Option<Arc<AtomicBool>>> {
+    LEFTOVER_SCAN.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// File types of a list export (F19).
 #[derive(Clone, Copy, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -318,5 +371,21 @@ pub async fn save_export(
 pub fn app_info() -> AppInfo {
     AppInfo {
         elevated: crate::win::token::is_elevated(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_new_leftover_scan_or_cancel_stops_the_running_one() {
+        let first = start_leftover_scan();
+        let second = start_leftover_scan();
+        assert!(first.load(Ordering::Relaxed));
+        assert!(!second.load(Ordering::Relaxed));
+        cancel_leftovers();
+        assert!(second.load(Ordering::Relaxed));
+        assert!(leftover_scan().is_none());
     }
 }

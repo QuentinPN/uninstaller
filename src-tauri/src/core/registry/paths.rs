@@ -16,10 +16,6 @@ pub const SYSTEM_RESTORE: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\
 
 /// Where programs keep their settings, one subkey per publisher or product, with the
 /// 32-bit twins as regedit shows them; all read in the native view.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "Phase 3: tested now, called by the next slices")
-)]
 pub const SOFTWARE_ROOTS: [(Hive, &str); 4] = [
     (Hive::LocalMachine, "SOFTWARE"),
     (Hive::LocalMachine, r"SOFTWARE\WOW6432Node"),
@@ -28,10 +24,6 @@ pub const SOFTWARE_ROOTS: [(Hive, &str); 4] = [
 ];
 
 /// One subkey per service and driver, under HKLM.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "Phase 3: tested now, called by the next slices")
-)]
 pub const SERVICES: &str = r"SYSTEM\CurrentControlSet\Services";
 
 /// Every installed program has a subkey here (per hive and view).
