@@ -14,6 +14,7 @@ import LeftoversView from "../leftovers/LeftoversView.svelte";
 import EmptyState from "../ui/EmptyState.svelte";
 import { EMPTY_SELECTION, type Selection } from "../ui/listNav";
 import VirtualList from "../ui/VirtualList.svelte";
+import UninstallSheet from "../uninstall/UninstallSheet.svelte";
 import AppIcon from "./AppIcon.svelte";
 import {
   EXPORT_FORMATS,
@@ -209,10 +210,31 @@ function measure(current: number) {
 
 /** The program whose leftovers screen replaces the list, if any. */
 let leftoversOf = $state<Program | null>(null);
+/** The leftovers screen continues a guided uninstall (steps 3 and 4). */
+let guided = $state(false);
+/** The program whose uninstall sheet is open, if any. */
+let uninstalling = $state<Program | null>(null);
 
 function closeLeftovers() {
   leftoversOf = null;
+  if (guided) {
+    guided = false;
+    load();
+  }
   tick().then(() => list?.focus());
+}
+
+function closeUninstall(ran: boolean) {
+  uninstalling = null;
+  if (ran) load();
+  tick().then(() => list?.focus());
+}
+
+/** The uninstaller has ended: its leftovers, for the program as listed before. */
+function uninstallLeftovers() {
+  leftoversOf = uninstalling;
+  uninstalling = null;
+  guided = true;
 }
 
 function closeDetails() {
@@ -221,7 +243,8 @@ function closeDetails() {
 }
 
 function onkeydown(event: KeyboardEvent) {
-  if (event.code !== "Escape" || !detailsOpen) return;
+  // The uninstall sheet takes its own Échap: the details stay open behind it.
+  if (event.code !== "Escape" || !detailsOpen || uninstalling) return;
   event.preventDefault();
   closeDetails();
 }
@@ -232,7 +255,7 @@ onMount(load);
 <svelte:window onafterprint={() => (printing = null)} />
 
 {#if leftoversOf}
-  <LeftoversView program={leftoversOf} onback={closeLeftovers} />
+  <LeftoversView program={leftoversOf} {guided} onback={closeLeftovers} />
 {:else}
 <header class="page-head">
   <h1>{fr.nav.programs}</h1>
@@ -399,6 +422,7 @@ onMount(load);
     key={(p) => p.id}
     label={fr.programs.list}
     onopen={() => (detailsOpen = true)}
+    onremove={(p) => (uninstalling = p)}
     group={(p) => groupLabel(p, group, sizes)}
   >
     {#snippet row(p: Program)}
@@ -455,12 +479,18 @@ onMount(load);
 {#if details}
   <ProgramDetails program={details} diskSizeKib={sizes.get(details.id)} onclose={closeDetails}
     onleftovers={() => (leftoversOf = details)}
+    onuninstall={() => (uninstalling = details)}
   />
 {/if}
 {#if printing}
   <PrintSheet doc={printing} />
 {/if}
 </div>
+{/if}
+{#if uninstalling}
+  <UninstallSheet program={uninstalling} onclose={closeUninstall}
+    onleftovers={uninstallLeftovers}
+  />
 {/if}
 
 <style>

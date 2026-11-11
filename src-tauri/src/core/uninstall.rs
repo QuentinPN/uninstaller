@@ -43,6 +43,9 @@ pub struct Uninstalled {
     pub exit_code: Option<u32>,
     /// False when the wait was stopped before it and all it started had ended.
     pub finished: bool,
+    /// The program's entry is still listed: its uninstaller was cancelled or failed,
+    /// or, when not `finished`, it still runs.
+    pub still_listed: bool,
 }
 
 /// What uninstalls `program`: `msiexec /X` with its product code for a Windows
@@ -93,6 +96,7 @@ pub fn run(program: &Program, stop: &AtomicBool) -> Result<Uninstalled, Uninstal
     Ok(Uninstalled {
         exit_code: root.exit_code(),
         finished,
+        still_listed: inventory::find(&program.id).is_some(),
     })
 }
 
@@ -184,7 +188,8 @@ mod tests {
             done,
             Ok(Uninstalled {
                 exit_code: Some(7),
-                finished: true
+                finished: true,
+                still_listed: false
             })
         );
     }

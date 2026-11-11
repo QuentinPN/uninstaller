@@ -283,6 +283,49 @@ export const fr = {
       },
     },
   },
+  /** The guided uninstall sheet (F4, DESIGN.md). */
+  uninstall: {
+    /** In the details panel; also Entrée or Suppr on the list. */
+    action: "Désinstaller",
+    title: (name: string) => `Désinstaller ${name}`,
+    stepsLabel: "Étapes de la désinstallation",
+    /** In order; the sheet shows the first two, the leftovers screen the others. */
+    steps: {
+      point: "Point de restauration",
+      uninstaller: "Désinstalleur",
+      leftovers: "Restes",
+      cleaning: "Nettoyage",
+    },
+    intro:
+      "Le désinstalleur du programme s'ouvre, puis ses restes sont recherchés. Rien n'est supprimé sans votre accord : ce que vous retirez part en quarantaine.",
+    withPoint: "Créer d'abord un point de restauration",
+    pointHint:
+      "Windows demande l'autorisation administrateur s'il ne l'a pas déjà donnée.",
+    withoutPoint: "Continuer sans point",
+    withoutPointHint:
+      "Vous pouvez désinstaller quand même : les restes retirés resteront restaurables depuis Sauvegardes.",
+    start: "Désinstaller",
+    cancel: "Annuler",
+    close: "Fermer",
+    running: "Le désinstalleur est ouvert : suivez ses fenêtres.",
+    runningHint:
+      "L'attente dure jusqu'à la fin du désinstalleur et de tout ce qu'il a lancé.",
+    stopWaiting: "Ne plus attendre",
+    stillListed: (name: string) =>
+      `${name} figure toujours parmi les programmes installés : sa désinstallation a peut-être été annulée.`,
+    /** By `UninstallFailure`. */
+    failure: {
+      notFound:
+        "Ce programme ne figure plus parmi les programmes installés. Fermez pour relire la liste.",
+      noUninstaller: "Ce programme ne déclare aucun désinstalleur.",
+      unsupported:
+        "La commande de désinstallation de ce programme n'est pas encore prise en charge : elle ne nomme pas son programme par un chemin complet.",
+      missing:
+        "Le désinstalleur de ce programme n'est plus sur le disque. Ses restes peuvent être recherchés depuis le panneau de détails.",
+      refused: "Autorisation administrateur refusée : rien n'a été lancé.",
+      failed: "Windows n'a pas pu lancer le désinstalleur.",
+    },
+  },
   /** Screens not built yet: what will be there, and when. */
   upcoming: {
     title: "Pas encore là",

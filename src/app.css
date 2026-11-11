@@ -24,6 +24,8 @@
   --color-on-caption-close: #ffffff;
   /* Selected rows and leftover confidence tint. */
   --fill-selected: rgb(143 211 245 / 0.16);
+  /* Dims the app behind a modal sheet. */
+  --scrim: rgb(0 0 0 / 0.5);
   /* Translucent materials for what floats over the content (never the scrolling list). */
   --material: rgb(40 40 46 / 0.6);
   --material-thick: rgb(36 36 42 / 0.78);
@@ -51,6 +53,8 @@
   --icon-size-small: 20px;
   /* Details panel beside the list. */
   --panel-width: 340px;
+  /* Modal sheets (guided uninstall). */
+  --sheet-width: 560px;
   --motion-fast: 120ms;
   --motion-base: 200ms;
   --motion-lift: 320ms;
@@ -172,6 +176,13 @@ h1 {
 .action:disabled {
   color: var(--color-text-muted);
   cursor: default;
+}
+.action.primary {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+.action.primary:hover:enabled {
+  background: var(--color-text-secondary);
 }
 .action.danger {
   background: var(--color-danger);

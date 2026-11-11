@@ -12,6 +12,7 @@ import {
 import { failedCall } from "../ipc/failed";
 import { autofocus } from "../ui/autofocus";
 import EmptyState from "../ui/EmptyState.svelte";
+import Steps from "../uninstall/Steps.svelte";
 import {
   check,
   count,
@@ -27,10 +28,12 @@ import {
 
 interface Props {
   program: Program;
+  /** Steps 3 and 4 of a guided uninstall: the steps are shown. */
+  guided?: boolean;
   onback: () => void;
 }
 
-let { program, onback }: Props = $props();
+let { program, guided = false, onback }: Props = $props();
 
 const t = fr.leftovers;
 const TAB_KEYS = Object.keys(TABS) as Tab[];
@@ -48,6 +51,8 @@ let cleaning = $state(false);
 /** Items the last quarantine left for want of rights, which the broker may take. */
 let held = $state(0);
 let notice = $state<{ text: string; failed: boolean } | null>(null);
+/** A quarantine was asked for: the guided uninstall is at its last step. */
+let cleaningStep = $state(false);
 /** Answers of an earlier scan (retried, or left) are ignored. */
 let run = 0;
 /** The scan the picks refer to; the backend refuses any other. */
@@ -89,6 +94,7 @@ function cancel() {
 /** One quarantine per scan; the rescan then shows what is left. */
 async function quarantine() {
   confirming = false;
+  cleaningStep = true;
   cleaning = true;
   notice = { text: t.cleaning, failed: false };
   const current = run;
@@ -163,6 +169,10 @@ onMount(() => {
     <button class="action elevate" onclick={elevate}>{t.elevate}</button>
   {/if}
 </header>
+
+{#if guided}
+  <div class="steps"><Steps current={cleaningStep || confirming ? 3 : 2} /></div>
+{/if}
 
 {#if scan.state === "scanning"}
   <div role="status" aria-busy="true">
@@ -256,6 +266,9 @@ onMount(() => {
 {/if}
 
 <style>
+  .steps {
+    margin-bottom: var(--space-4);
+  }
   .back {
     align-self: center;
     padding: var(--space-2);

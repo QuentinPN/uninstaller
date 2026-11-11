@@ -273,6 +273,10 @@ static LEFTOVER_SCAN: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
 /// Raised to stop waiting for the uninstaller started last.
 static UNINSTALL_WAIT: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
 
+/// The program whose uninstaller ran last, as listed before: its entry is gone once
+/// uninstalled, and the leftover scan still needs its name, publisher and folder.
+static UNINSTALLED: Mutex<Option<Program>> = Mutex::new(None);
+
 /// The last scan that answered, for `quarantine_leftovers` to read the picks from: the
 /// UI sends back places in it, never paths.
 static LAST_LEFTOVERS: Mutex<Option<Scanned>> = Mutex::new(None);
@@ -317,14 +321,17 @@ pub enum LeftoverFailure {
     Failed,
 }
 
-/// Leftovers of the program `id` names (F5), read only, off the async runtime. A new
-/// scan stops the one running.
+/// Leftovers of the program `id` names (F5), read only, off the async runtime: an
+/// installed one, or the one `run_uninstaller` ran last. A new scan stops the one
+/// running.
 #[tauri::command]
 #[specta::specta]
 pub async fn scan_leftovers(id: String) -> Result<Scan, LeftoverFailure> {
     let cancelled = fresh_flag(&LEFTOVER_SCAN);
     tauri::async_runtime::spawn_blocking(move || {
-        let program = inventory::find(&id).ok_or(LeftoverFailure::NotFound)?;
+        let program = inventory::find(&id)
+            .or_else(|| uninstalled().clone().filter(|gone| gone.id == id))
+            .ok_or(LeftoverFailure::NotFound)?;
         let all = inventory::scan();
         let found =
             leftovers::find(&program, &all, &cancelled).ok_or(LeftoverFailure::Cancelled)?;
@@ -362,6 +369,7 @@ pub async fn run_uninstaller(id: String) -> Result<Uninstalled, UninstallFailure
     let stop = fresh_flag(&UNINSTALL_WAIT);
     tauri::async_runtime::spawn_blocking(move || {
         let program = inventory::find(&id).ok_or(UninstallFailure::NotFound)?;
+        *uninstalled() = Some(program.clone());
         uninstall::run(&program, &stop)
     })
     .await
@@ -430,6 +438,10 @@ pub async fn quarantine_held_leftovers() -> Result<Cleaned, ElevationFailure> {
         *held = None;
     }
     Ok(cleaned)
+}
+
+fn uninstalled() -> std::sync::MutexGuard<'static, Option<Program>> {
+    UNINSTALLED.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn held_leftovers() -> std::sync::MutexGuard<'static, Option<Pending>> {

@@ -10,9 +10,12 @@ interface Props {
   onclose: () => void;
   /** Opens the leftovers screen for this program. */
   onleftovers: () => void;
+  /** Opens the guided uninstall sheet. */
+  onuninstall: () => void;
 }
 
-let { program, diskSizeKib, onclose, onleftovers }: Props = $props();
+let { program, diskSizeKib, onclose, onleftovers, onuninstall }: Props =
+  $props();
 
 const t = fr.programs.details;
 type Field = { label: string; value: string | null | undefined };
@@ -112,6 +115,7 @@ function openFolder() {
     {/each}
   </dl>
 
+  <button class="action primary" onclick={onuninstall}>{fr.uninstall.action}</button>
   {#if program.installLocation}
     <button class="action" onclick={openFolder}>{t.openFolder}</button>
   {/if}

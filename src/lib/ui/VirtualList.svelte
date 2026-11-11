@@ -18,6 +18,8 @@ interface Props {
   selection?: Selection;
   /** Space or double-click on a row. */
   onopen?: (item: T) => void;
+  /** Entrée or Suppr on the active item. */
+  onremove?: (item: T) => void;
   /** Heading of the item's group: a heading row starts each run of equal headings. */
   group?: (item: T) => string | null;
 }
@@ -29,6 +31,7 @@ let {
   label,
   selection = $bindable(EMPTY_SELECTION),
   onopen,
+  onremove,
   group,
 }: Props = $props();
 
@@ -95,6 +98,8 @@ function reveal(index: number) {
     viewport.scrollTop = top + rowHeight - height;
 }
 
+const REMOVE_KEYS = new Set(["Enter", "NumpadEnter", "Delete"]);
+
 function onkeydown(event: KeyboardEvent) {
   const current = activeIndex;
   if (event.code === "KeyA" && event.ctrlKey) {
@@ -105,6 +110,17 @@ function onkeydown(event: KeyboardEvent) {
   if (event.code === "Space" && current >= 0) {
     event.preventDefault();
     onopen?.(items[current] as T);
+    return;
+  }
+  const plain = !(
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey ||
+    event.metaKey
+  );
+  if (plain && REMOVE_KEYS.has(event.code) && current >= 0 && onremove) {
+    event.preventDefault();
+    onremove(items[current] as T);
     return;
   }
   const page = Math.max(1, Math.floor(height / rowHeight) - 1);

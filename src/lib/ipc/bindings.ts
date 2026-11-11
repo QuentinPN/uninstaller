@@ -57,8 +57,9 @@ export const commands = {
 	 */
 	computeSizes: (onSizes: Channel<ProgramSize[]>) => __TAURI_INVOKE<void>("compute_sizes", { onSizes }),
 	/**
-	 *  Leftovers of the program `id` names (F5), read only, off the async runtime. A new
-	 *  scan stops the one running.
+	 *  Leftovers of the program `id` names (F5), read only, off the async runtime: an
+	 *  installed one, or the one `run_uninstaller` ran last. A new scan stops the one
+	 *  running.
 	 */
 	scanLeftovers: (id: string) => typedError<Scan, LeftoverFailure>(__TAURI_INVOKE("scan_leftovers", { id })),
 	/**  Stops the leftover scan running; its `scan_leftovers` answers `Cancelled`. */
@@ -393,6 +394,11 @@ export type Uninstalled_Deserialize = {
 	exitCode?: number | null,
 	/**  False when the wait was stopped before it and all it started had ended. */
 	finished: boolean,
+	/**
+	 *  The program's entry is still listed: its uninstaller was cancelled or failed,
+	 *  or, when not `finished`, it still runs.
+	 */
+	stillListed: boolean,
 };
 
 /**  How the uninstaller ended. */
@@ -404,6 +410,11 @@ export type Uninstalled_Serialize = {
 	exitCode: number | null,
 	/**  False when the wait was stopped before it and all it started had ended. */
 	finished: boolean,
+	/**
+	 *  The program's entry is still listed: its uninstaller was cancelled or failed,
+	 *  or, when not `finished`, it still runs.
+	 */
+	stillListed: boolean,
 };
 
 /* Tauri Specta runtime */

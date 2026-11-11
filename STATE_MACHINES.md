@@ -24,6 +24,8 @@ Invariants : une seule tâche active par programme ; rien n'est supprimé avant 
 | * (avant Quarantining) | cancel | Cancelled | |
 | * | error | Failed | |
 
+Interface (tranche 17, `src/lib/uninstall/UninstallSheet.svelte`) : feuille `confirm → point → running`, puis l'écran des restes (`AwaitingScan` et la suite). `confirm` sans point coché va droit à `running`. `point` → `pointFailed` si Windows refuse ou échoue (`disabled`, `refused`, `failed`) ; `pointFailed` → `running` sur « Continuer sans point ». `running` → `failed{cause}` sur un refus, « Réessayer » seulement après `refused`. Désinstalleur fini mais programme encore listé → `stillListed`, qui mène à l'écran des restes sur « Rechercher les restes ». Échap et fermeture ignorés pendant `point` et `running` ; la liste est relue dès que le désinstalleur a été lancé.
+
 ### 6. Chargement de l'inventaire — liste (Phase 1, tranche 1)
 
 `ProgramsView.svelte` : `programs = null` (chargement) · `programs = [...]` (chargé) · `failed = true` (erreur). Lecture seule, pas d'effet de bord : relancer est toujours sûr.
