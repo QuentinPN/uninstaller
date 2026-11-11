@@ -60,9 +60,14 @@ export const commands = {
 	 *  Leftovers of the program `id` names (F5), read only, off the async runtime. A new
 	 *  scan stops the one running.
 	 */
-	scanLeftovers: (id: string) => typedError<Found, LeftoverFailure>(__TAURI_INVOKE("scan_leftovers", { id })),
+	scanLeftovers: (id: string) => typedError<Scan, LeftoverFailure>(__TAURI_INVOKE("scan_leftovers", { id })),
 	/**  Stops the leftover scan running; its `scan_leftovers` answers `Cancelled`. */
 	cancelLeftovers: () => __TAURI_INVOKE<void>("cancel_leftovers"),
+	/**
+	 *  Moves the `picks` of the scan `serial` into a new quarantine batch (F5, ADR 0003),
+	 *  off the async runtime. Once per scan: the UI scans again to show what is left.
+	 */
+	quarantineLeftovers: (serial: number, picks: Pick[]) => typedError<Cleaned_Serialize, CleanFailure>(__TAURI_INVOKE("quarantine_leftovers", { serial, picks })),
 	/**
 	 *  Opens a program's install folder in Explorer. Takes the opaque id, never a path:
 	 *  the folder is read back from the registry. False if it no longer exists.
@@ -116,6 +121,38 @@ export type BatchSummary = {
 	/**  What its kept items take on disk. */
 	sizeKib: number,
 	purging: boolean,
+};
+
+/**  Why picked leftovers were not moved. */
+export type CleanFailure = 
+/**  `serial` is not the last scan's, or its items were already sent: scan again. */
+"stale" | 
+/**  The quarantine folder could not be created or written. */
+"failed";
+
+/**  What became of the picked items. */
+export type Cleaned = Cleaned_Serialize | Cleaned_Deserialize;
+
+/**  What became of the picked items. */
+export type Cleaned_Deserialize = {
+	/**  The quarantine batch they went into; none when nothing moved. */
+	batch?: string | null,
+	moved: number,
+	/**  Refused without elevation (Program Files, HKLM): left in place. */
+	needsAdmin: number,
+	/**  Protected, in use, gone meanwhile, or not handled yet (services, tasks). */
+	failed: number,
+};
+
+/**  What became of the picked items. */
+export type Cleaned_Serialize = {
+	/**  The quarantine batch they went into; none when nothing moved. */
+	batch: string | null,
+	moved: number,
+	/**  Refused without elevation (Program Files, HKLM): left in place. */
+	needsAdmin: number,
+	/**  Protected, in use, gone meanwhile, or not handled yet (services, tasks). */
+	failed: number,
 };
 
 /**
@@ -181,6 +218,9 @@ export type LeftoverFailure =
 /**  The scan stopped on an unexpected error. */
 "failed";
 
+/**  A list of `Found`, for the UI to name an item by its list and its place in it. */
+export type List = "folders" | "shortcuts" | "keys" | "services" | "tasks";
+
 /**
  *  A registry key as regedit shows it (`HKEY_CURRENT_USER\Software\Acme\Widget`), a
  *  service's name or a scheduled task's path; ordered surest first, then by name.
@@ -188,6 +228,12 @@ export type LeftoverFailure =
 export type Named = {
 	confidence: Confidence,
 	name: string,
+};
+
+/**  One item the user picked: never a path, only where it sits in the scan's answer. */
+export type Pick = {
+	list: List,
+	index: number,
 };
 
 export type Program = Program_Serialize | Program_Deserialize;
@@ -263,6 +309,12 @@ export type RestorePoint = "created" |
 "skipped" | 
 /**  System Restore is turned off. */
 "disabled" | "failed";
+
+/**  A scan's answer and its number, which `quarantine_leftovers` takes back. */
+export type Scan = {
+	serial: number,
+	found: Found,
+};
 
 /**  Where the program is registered. */
 export type Scope = 

@@ -3,17 +3,19 @@
 //! keys under `SOFTWARE`, its services and its scheduled tasks. Read only: it proposes,
 //! the quarantine moves. Every folder passes `protect::is_protected`, every key
 //! `protect::is_protected_key`, every task `protect::is_protected_task`; links and
-//! junctions are never listed nor followed.
+//! junctions are never listed nor followed. `clean` hands the folders, shortcuts and
+//! keys the user picked to the quarantine, which checks `protect` again.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::core::inventory::{self, Program};
 use crate::core::protect;
+use crate::core::quarantine;
 use crate::core::registry::paths;
 use crate::win::registry::{Hive, Key, View};
 use crate::win::{icon, scheduler, shortcut};
@@ -32,7 +34,7 @@ pub enum Confidence {
 }
 
 /// Ordered surest first, then by path.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Type)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Type)]
 pub struct Leftover {
     pub confidence: Confidence,
     pub path: PathBuf,
@@ -40,7 +42,7 @@ pub struct Leftover {
 
 /// A registry key as regedit shows it (`HKEY_CURRENT_USER\Software\Acme\Widget`), a
 /// service's name or a scheduled task's path; ordered surest first, then by name.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Type)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Type)]
 pub struct Named {
     pub confidence: Confidence,
     pub name: String,
@@ -109,7 +111,7 @@ const COMPANY_WORDS: [&str; 17] = [
 ];
 
 /// Everything a program may have left, by kind, each list surest first.
-#[derive(Debug, Serialize, Type)]
+#[derive(Clone, Debug, Serialize, Type)]
 pub struct Found {
     pub folders: Vec<Leftover>,
     pub shortcuts: Vec<Leftover>,
@@ -141,6 +143,120 @@ pub fn find(program: &Program, all: &[Program], cancelled: &AtomicBool) -> Optio
         services,
         tasks,
     })
+}
+
+/// A list of `Found`, for the UI to name an item by its list and its place in it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum List {
+    Folders,
+    Shortcuts,
+    Keys,
+    Services,
+    Tasks,
+}
+
+/// One item the user picked: never a path, only where it sits in the scan's answer.
+#[derive(Clone, Copy, Debug, Deserialize, Type)]
+pub struct Pick {
+    pub list: List,
+    pub index: u32,
+}
+
+/// What became of the picked items.
+#[derive(Debug, Default, PartialEq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct Cleaned {
+    /// The quarantine batch they went into; none when nothing moved.
+    pub batch: Option<String>,
+    pub moved: u32,
+    /// Refused without elevation (Program Files, HKLM): left in place.
+    pub needs_admin: u32,
+    /// Protected, in use, gone meanwhile, or not handled yet (services, tasks).
+    pub failed: u32,
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum Item<'a> {
+    Path(&'a Path),
+    Key(&'a str),
+}
+
+impl Item<'_> {
+    fn depth(&self) -> usize {
+        match self {
+            Item::Path(path) => path.components().count(),
+            Item::Key(key) => key.split('\\').count(),
+        }
+    }
+
+    /// Whether this item went with `moved`, a folder or key that holds it.
+    fn inside(&self, moved: &Item) -> bool {
+        match (self, moved) {
+            (Item::Path(path), Item::Path(parent)) => path.starts_with(parent),
+            (Item::Key(key), Item::Key(parent)) => key
+                .to_ascii_lowercase()
+                .strip_prefix(&parent.to_ascii_lowercase())
+                .is_some_and(|rest| rest.starts_with('\\')),
+            _ => false,
+        }
+    }
+}
+
+/// Moves the `picks` of `found` into a new quarantine batch under `root`, named after
+/// `label`. Parents go before what they hold, which then counts as moved with them.
+/// An empty batch is removed again.
+pub fn clean(
+    found: &Found,
+    picks: &[Pick],
+    root: &Path,
+    label: &str,
+) -> Result<Cleaned, quarantine::Error> {
+    let mut cleaned = Cleaned::default();
+    let mut items = Vec::new();
+    for pick in picks {
+        let index = pick.index as usize;
+        let item = match pick.list {
+            List::Folders => found.folders.get(index).map(|f| Item::Path(&f.path)),
+            List::Shortcuts => found.shortcuts.get(index).map(|s| Item::Path(&s.path)),
+            List::Keys => found.keys.get(index).map(|k| Item::Key(&k.name)),
+            List::Services | List::Tasks => None,
+        };
+        match item {
+            Some(item) => items.push(item),
+            None => cleaned.failed += 1,
+        }
+    }
+    items.sort();
+    items.dedup();
+    // Shallowest first: a parent goes before what it holds whatever the letter case.
+    items.sort_by_key(Item::depth);
+    let mut batch = quarantine::create_for(root, label)?;
+    let mut moved: Vec<Item> = Vec::new();
+    for item in items {
+        if moved.iter().any(|parent| item.inside(parent)) {
+            cleaned.moved += 1;
+            continue;
+        }
+        let done = match item {
+            Item::Path(path) => batch.quarantine(path),
+            Item::Key(key) => batch.quarantine_key(key),
+        };
+        match done {
+            Ok(()) => {
+                cleaned.moved += 1;
+                moved.push(item);
+            }
+            Err(error) if quarantine::needs_admin(&error) => cleaned.needs_admin += 1,
+            Err(_) => cleaned.failed += 1,
+        }
+    }
+    if batch.items().is_empty() {
+        batch.discard()?;
+    } else {
+        cleaned.batch = Some(batch.name());
+    }
+    Ok(cleaned)
 }
 
 impl Target {
@@ -943,6 +1059,80 @@ mod tests {
         let kinds = [found.folders.len(), found.shortcuts.len(), found.keys.len()];
         assert_eq!(kinds, [0; 3]);
         assert!(found.services.is_empty() && found.tasks.is_empty());
+    }
+
+    #[test]
+    fn cleans_the_picks_parents_first_and_skips_what_it_cannot() {
+        let dir = std::env::temp_dir()
+            .join("uninstaller-tests")
+            .join(format!("clean-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join(r"Widget\data")).unwrap();
+        fs::write(dir.join(r"Widget\data\a.ini"), b"a").unwrap();
+        fs::write(dir.join("Widget.lnk"), b"link").unwrap();
+        let path = registry::test_key::fresh("clean");
+        registry::Key::create(Hive::CurrentUser, &format!(r"{path}\Sub"), View::Native64).unwrap();
+        let key = format!(r"HKEY_CURRENT_USER\{path}");
+        let left = |path: PathBuf| Leftover {
+            confidence: Confidence::Safe,
+            path,
+        };
+        let named = |name: String| Named {
+            confidence: Confidence::Safe,
+            name,
+        };
+        let found = Found {
+            // Listed child first: the parent still goes first.
+            folders: vec![
+                left(dir.join(r"Widget\data")),
+                left(dir.join("Widget")),
+                left(PathBuf::from(r"C:\Windows")),
+            ],
+            shortcuts: vec![left(dir.join("Widget.lnk"))],
+            keys: vec![named(format!(r"{key}\SUB")), named(key.clone())],
+            services: vec![named("WidgetSvc".into())],
+            tasks: Vec::new(),
+        };
+        let pick = |list, index| Pick { list, index };
+        let picks = [
+            pick(List::Folders, 0),
+            pick(List::Folders, 1),
+            pick(List::Folders, 2),
+            pick(List::Folders, 9),
+            pick(List::Shortcuts, 0),
+            pick(List::Keys, 0),
+            pick(List::Keys, 1),
+            pick(List::Services, 0),
+        ];
+        let root = dir.join("quarantine");
+        let cleaned = clean(&found, &picks, &root, "Widget: Pro").unwrap();
+        assert_eq!(
+            cleaned,
+            Cleaned {
+                batch: Some("Widget Pro".into()),
+                moved: 5,
+                needs_admin: 0,
+                failed: 3,
+            }
+        );
+        assert!(!dir.join("Widget").exists() && !dir.join("Widget.lnk").exists());
+        assert!(!registry::key_exists(Hive::CurrentUser, &path, View::Native64).unwrap());
+        // Everything comes back from the batch.
+        let mut batch = quarantine::Batch::open(&root.join("Widget Pro")).unwrap();
+        assert_eq!(batch.items().len(), 3);
+        batch.restore().unwrap();
+        assert!(dir.join(r"Widget\data\a.ini").exists() && dir.join("Widget.lnk").exists());
+        assert!(
+            registry::key_exists(Hive::CurrentUser, &format!(r"{path}\Sub"), View::Native64)
+                .unwrap()
+        );
+        batch.purge().unwrap();
+        registry::test_key::clear(&path);
+        // Nothing to move: no batch is left behind.
+        let none = clean(&found, &[pick(List::Services, 0)], &root, "Widget").unwrap();
+        assert_eq!(none.batch, None);
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

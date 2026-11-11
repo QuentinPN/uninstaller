@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Found } from "../ipc/bindings";
-import { check, count, groups, safeIds, toggle, toggleAll } from "./tree";
+import {
+  check,
+  count,
+  groups,
+  picks,
+  removable,
+  safeIds,
+  toggle,
+  toggleAll,
+} from "./tree";
 
 const FOUND: Found = {
   folders: [
@@ -55,5 +64,22 @@ describe("selection", () => {
       "folders:0",
       "keys:0",
     ]);
+  });
+});
+
+describe("picks", () => {
+  it("sends lists and indexes, and leaves services and tasks out of the quarantine", () => {
+    expect(picks(new Set(["folders:1", "keys:0"]))).toEqual([
+      { list: "folders", index: 1 },
+      { list: "keys", index: 0 },
+    ]);
+    expect(removable("keys")).toBe(true);
+    expect(removable("services")).toBe(false);
+    expect(removable("tasks")).toBe(false);
+    const services = {
+      ...FOUND,
+      services: [{ confidence: "safe" as const, name: "Acme" }],
+    };
+    expect(safeIds(services).has("services:0")).toBe(false);
   });
 });

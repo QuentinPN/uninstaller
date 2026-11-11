@@ -178,6 +178,23 @@ h1 {
   color: var(--color-on-primary);
 }
 
+/* An inline confirmation: what will happen, then the safe choice and the action. */
+.confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+.confirm p {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+.buttons {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+}
+
 /* A screen's title line: the title, then its counts and notices. */
 .page-head {
   display: flex;
@@ -192,6 +209,10 @@ h1 {
 .summary {
   margin: 0;
   color: var(--color-text-secondary);
+}
+/* The outcome of the last action, next to the title. */
+.notice.failed {
+  color: var(--color-danger);
 }
 
 /* An on/off pill: a filter, a view, a tab. */

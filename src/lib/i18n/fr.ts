@@ -232,6 +232,28 @@ export const fr = {
     selected: (n: number) =>
       `${n} élément${n > 1 ? "s" : ""} sélectionné${n > 1 ? "s" : ""}`,
     tabEmpty: "Rien dans cet onglet.",
+    /** Services and tasks: listed, not yet removable. */
+    later: "Leur retrait arrive avec l'élévation",
+    quarantine: "Mettre en quarantaine",
+    confirm: (n: number) =>
+      `${n} élément${n > 1 ? "s" : ""} ${n > 1 ? "seront déplacés" : "sera déplacé"} en quarantaine. Vous pourrez ${n > 1 ? "les" : "le"} restaurer depuis Sauvegardes.`,
+    cleaning: "Mise en quarantaine…",
+    /** `Cleaned`: what moved, what waits for rights, what could not move. */
+    cleaned: (moved: number, needsAdmin: number, failed: number) =>
+      [
+        `${moved} élément${moved > 1 ? "s" : ""} en quarantaine`,
+        needsAdmin &&
+          `${needsAdmin} demande${needsAdmin > 1 ? "nt" : ""} les droits d'administrateur`,
+        failed &&
+          `${failed} n'${failed > 1 ? "ont" : "a"} pas pu être déplacé${failed > 1 ? "s" : ""}`,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    /** By `CleanFailure`; nothing moved in either case. */
+    cleanFailure: {
+      stale: "La liste avait changé : elle a été relue, rien n'a été déplacé.",
+      failed: "La mise en quarantaine a échoué ; rien n'a été déplacé.",
+    },
     empty: {
       title: "Aucun reste trouvé",
       text: "Aucune trace de ce programme n'a été trouvée sur le disque ni dans le registre.",

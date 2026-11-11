@@ -26,6 +26,7 @@ fn ipc() -> Builder<tauri::Wry> {
             commands::compute_sizes,
             commands::scan_leftovers,
             commands::cancel_leftovers,
+            commands::quarantine_leftovers,
             commands::open_install_folder,
             commands::save_export
         ])

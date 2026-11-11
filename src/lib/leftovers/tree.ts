@@ -1,4 +1,4 @@
-import type { Confidence, Found } from "../ipc/bindings";
+import type { Confidence, Found, List, Pick } from "../ipc/bindings";
 
 /** The lists of a scan, in the order the screen shows them. */
 export type GroupKey = keyof Found;
@@ -9,6 +9,17 @@ export const TABS: Record<Tab, GroupKey[]> = {
   files: ["folders", "shortcuts"],
   registry: ["keys", "services", "tasks"],
 };
+
+/** What the quarantine takes for now; services and tasks wait for elevation. */
+const REMOVABLE: ReadonlySet<GroupKey> = new Set<GroupKey>([
+  "folders",
+  "shortcuts",
+  "keys",
+]);
+
+export function removable(key: GroupKey): boolean {
+  return REMOVABLE.has(key);
+}
 
 export interface Item {
   /** `group:index` in the scan's answer, stable while it is shown. */
@@ -48,7 +59,8 @@ export function safeIds(found: Found): Set<string> {
   for (const tab of Object.keys(TABS) as Tab[]) {
     for (const group of groups(found, tab)) {
       for (const item of group.items) {
-        if (item.confidence === "safe") ids.add(item.id);
+        if (removable(group.key) && item.confidence === "safe")
+          ids.add(item.id);
       }
     }
   }
@@ -78,4 +90,12 @@ export function toggle(id: string, selected: ReadonlySet<string>): Set<string> {
   const next = new Set(selected);
   if (!next.delete(id)) next.add(id);
   return next;
+}
+
+/** The selection as the backend takes it: a list and an index, never a path. */
+export function picks(selected: ReadonlySet<string>): Pick[] {
+  return [...selected].map((id) => {
+    const [list, index] = id.split(":");
+    return { list: list as List, index: Number(index) };
+  });
 }

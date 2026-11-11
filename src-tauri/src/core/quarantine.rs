@@ -241,6 +241,22 @@ impl Batch {
         &self.items
     }
 
+    /// The batch folder's name, the only handle the UI gets.
+    pub fn name(&self) -> String {
+        self.dir
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
+    /// Removes a batch nothing went into; one holding items is kept.
+    pub fn discard(self) -> Result<(), Error> {
+        if !self.items.is_empty() {
+            return Err(Error::Exists);
+        }
+        self.remove()
+    }
+
     pub fn summary(&self, delay: Duration) -> BatchSummary {
         let left = || self.items.iter().filter(|i| i.state != State::Restored);
         let keys = left().filter(|i| i.kind == Kind::Key).count();
@@ -248,11 +264,7 @@ impl Batch {
         let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
         let secs = |s: u64| u32::try_from(s).unwrap_or(u32::MAX);
         BatchSummary {
-            name: self
-                .dir
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default(),
+            name: self.name(),
             created: secs(self.created),
             purge_on: secs(self.created.saturating_add(delay.as_secs())),
             files: count(files),
@@ -316,6 +328,8 @@ impl Batch {
         if protect::is_protected_key(hive, path) {
             return Err(Error::Protected);
         }
+        // An HKLM key without elevation: refused here, not halfway through.
+        registry::check_delete(hive, path, View::Native64)?;
         let saved = reg_file::export(hive, path, View::Native64).ok_or(Error::Unreadable)?;
         let hash = hex(&Sha256::digest(&saved));
         let index = self.items.len();
@@ -476,6 +490,32 @@ impl Batch {
 /// `%LOCALAPPDATA%\Uninstaller\quarantine` (ARCHITECTURE.md, Données locales).
 pub fn root() -> Option<PathBuf> {
     store::data_dir().map(|dir| dir.join("quarantine"))
+}
+
+/// A new batch under `root` named after `label` (a program's name) made a plain folder
+/// name, with " 2", " 3"… when that name is taken.
+pub fn create_for(root: &Path, label: &str) -> Result<Batch, Error> {
+    const MAX_CHARS: usize = 60;
+    const MAX_TRIES: u32 = 99;
+    let plain: String = label
+        .chars()
+        .filter(|c| !c.is_control() && !r#"\/:*?"<>|"#.contains(*c))
+        .take(MAX_CHARS)
+        .collect();
+    let plain = plain.trim().trim_end_matches(['.', ' ']);
+    let base = if plain.is_empty() { "Lot" } else { plain };
+    for n in 1..=MAX_TRIES {
+        let name = if n == 1 {
+            base.to_owned()
+        } else {
+            format!("{base} {n}")
+        };
+        match Batch::create(root, &name) {
+            Err(Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {}
+            created => return created,
+        }
+    }
+    Err(io::Error::from(io::ErrorKind::AlreadyExists).into())
 }
 
 /// At startup: resumes every batch under `root`. A batch that cannot be read is left
@@ -823,7 +863,10 @@ mod tests {
         assert_eq!(batch.items()[0].state, State::Moved);
         assert_eq!(fs::read(batch.stored(0)).unwrap(), before);
 
-        assert!(matches!(batch.quarantine_key(&key), Err(Error::Unreadable)));
+        assert!(matches!(
+            batch.quarantine_key(&key),
+            Err(Error::Io(e)) if e.kind() == io::ErrorKind::NotFound
+        ));
         for refused in [r"HKEY_CURRENT_USER\Software", r"HKEY_CLASSES_ROOT\x", "x"] {
             assert!(matches!(
                 batch.quarantine_key(refused),

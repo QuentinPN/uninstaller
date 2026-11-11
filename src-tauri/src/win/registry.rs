@@ -169,10 +169,6 @@ impl Key {
     }
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "Phase 2: tested now, called by the next slices")
-)]
 impl Key {
     /// Every subkey name, or `None` if one cannot be read.
     pub fn all_subkey_names(&self) -> Option<Vec<String>> {
@@ -322,6 +318,12 @@ pub fn delete_tree(hive: Hive, path: &str, view: View) -> io::Result<()> {
     delete_empty(hive, path, view)
 }
 
+/// Whether the key at `path` may be removed: opened with every right, as `delete_tree`
+/// does, so an access denied comes before anything is saved or changed.
+pub fn check_delete(hive: Hive, path: &str, view: View) -> io::Result<()> {
+    open(hive.root(), path, KEY_ALL_ACCESS | view.flags()).map(drop)
+}
+
 /// Whether the key at `path` exists; an error other than "not found" (access denied)
 /// is not taken for an answer.
 pub fn key_exists(hive: Hive, path: &str, view: View) -> io::Result<bool> {
@@ -361,22 +363,10 @@ impl Drop for Key {
 struct KeyInfo {
     subkeys: u32,
     max_subkey_len: u32,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Phase 2: tested now, called by the next slices")
-    )]
     values: u32,
     /// In characters, without the terminating null.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Phase 2: tested now, called by the next slices")
-    )]
     max_value_name_len: u32,
     /// In bytes.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Phase 2: tested now, called by the next slices")
-    )]
     max_value_len: u32,
     last_write: u64,
 }
@@ -430,6 +420,13 @@ mod tests {
         assert!(key.string("NoSuchValue").is_none());
         assert!(key.last_write().is_some());
         assert!(!key.subkey_names().is_empty());
+    }
+
+    #[test]
+    fn a_machine_key_cannot_be_removed_without_elevation() {
+        // Only opens the key: nothing changes, elevated or not.
+        let denied = super::check_delete(Hive::LocalMachine, "SOFTWARE", View::Native64).is_err();
+        assert_eq!(denied, !crate::win::token::is_elevated());
     }
 
     #[test]

@@ -7,11 +7,15 @@ import {
   type LeftoverFailure,
   type Program,
 } from "../ipc/bindings";
+import { failedCall } from "../ipc/failed";
+import { autofocus } from "../ui/autofocus";
 import EmptyState from "../ui/EmptyState.svelte";
 import {
   check,
   count,
   groups,
+  picks,
+  removable,
   safeIds,
   TABS,
   type Tab,
@@ -37,8 +41,13 @@ type Scan =
 let scan = $state<Scan>({ state: "scanning" });
 let tab = $state<Tab>("files");
 let selected = $state<Set<string>>(new Set());
+let confirming = $state(false);
+let cleaning = $state(false);
+let notice = $state<{ text: string; failed: boolean } | null>(null);
 /** Answers of an earlier scan (retried, or left) are ignored. */
 let run = 0;
+/** The scan the picks refer to; the backend refuses any other. */
+let serial = 0;
 
 const found = $derived(scan.state === "done" ? scan.found : null);
 const total = $derived(
@@ -56,9 +65,11 @@ function start() {
         scan = { state: "failed", failure: result.error };
         return;
       }
-      scan = { state: "done", found: result.data };
-      selected = safeIds(result.data);
-      tab = count(result.data, "files") ? "files" : "registry";
+      const { found } = result.data;
+      serial = result.data.serial;
+      scan = { state: "done", found };
+      selected = safeIds(found);
+      tab = count(found, "files") ? "files" : "registry";
     },
     () => {
       if (current === run) scan = { state: "failed", failure: "failed" };
@@ -70,10 +81,31 @@ function cancel() {
   commands.cancelLeftovers().catch(() => {});
 }
 
+/** One quarantine per scan; the rescan then shows what is left. */
+async function quarantine() {
+  confirming = false;
+  cleaning = true;
+  notice = { text: t.cleaning, failed: false };
+  const current = run;
+  const result = await commands
+    .quarantineLeftovers(serial, picks(selected))
+    .catch(failedCall);
+  if (current !== run) return;
+  cleaning = false;
+  if (result.status === "ok") {
+    const { moved, needsAdmin, failed } = result.data;
+    notice = { text: t.cleaned(moved, needsAdmin, failed), failed: failed > 0 };
+  } else {
+    notice = { text: t.cleanFailure[result.error], failed: true };
+  }
+  start();
+}
+
 function onkeydown(event: KeyboardEvent) {
   if (event.code !== "Escape" || event.defaultPrevented) return;
   event.preventDefault();
-  onback();
+  if (confirming) confirming = false;
+  else if (!cleaning) onback();
 }
 
 onMount(() => {
@@ -95,6 +127,11 @@ onMount(() => {
   <p class="summary">{program.name}</p>
   {#if total}
     <p class="summary num">{t.found(total)}</p>
+  {/if}
+  {#if notice}
+    <p class="summary notice" class:failed={notice.failed} role="status">
+      {notice.text}
+    </p>
   {/if}
 </header>
 
@@ -122,11 +159,31 @@ onMount(() => {
       {t.selectSafe}
     </button>
     <p class="summary chosen num" role="status">{t.selected(selected.size)}</p>
+    <button
+      class="action"
+      disabled={!selected.size || cleaning || confirming}
+      onclick={() => (confirming = true)}
+    >
+      {t.quarantine}
+    </button>
   </div>
+
+  {#if confirming}
+    <div class="confirm" role="alertdialog" aria-label={t.quarantine}>
+      <p>{t.confirm(selected.size)}</p>
+      <div class="buttons">
+        <button class="action" use:autofocus onclick={() => (confirming = false)}>
+          {t.cancel}
+        </button>
+        <button class="action danger" onclick={quarantine}>{t.quarantine}</button>
+      </div>
+    </div>
+  {/if}
 
   <div class="groups">
     {#each shown as group (group.key)}
       {@const box = check(group.items, selected)}
+      {@const locked = !removable(group.key) || cleaning}
       <section aria-label={t.group[group.key]}>
         <label class="group-head">
           <input
@@ -134,10 +191,14 @@ onMount(() => {
             aria-label={t.selectGroup(t.group[group.key])}
             checked={box === "all"}
             indeterminate={box === "some"}
+            disabled={locked}
             onchange={() => (selected = toggleAll(group.items, selected))}
           />
           <span class="group-name">{t.group[group.key]}</span>
           <span class="num">{group.items.length}</span>
+          {#if !removable(group.key)}
+            <span class="later">{t.later}</span>
+          {/if}
         </label>
         <ul>
           {#each group.items as item (item.id)}
@@ -146,9 +207,10 @@ onMount(() => {
                 <input
                   type="checkbox"
                   checked={selected.has(item.id)}
+                  disabled={locked}
                   onchange={() => (selected = toggle(item.id, selected))}
                 />
-                <span class="label" class:safe={item.confidence === "safe"}>
+                <span class="label" class:safe={item.confidence === "safe" && removable(group.key)}>
                   {item.label}
                 </span>
                 <span class="confidence">{t.confidence[item.confidence]}</span>
@@ -181,6 +243,9 @@ onMount(() => {
   .back:active {
     background: var(--fill-pressed);
   }
+  .notice {
+    flex: 1;
+  }
   .summary {
     min-width: 0;
     overflow: hidden;
@@ -196,6 +261,12 @@ onMount(() => {
     align-items: center;
     gap: var(--space-4);
     margin-bottom: var(--space-4);
+  }
+  .confirm {
+    margin-bottom: var(--space-4);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
   }
   .groups {
     display: flex;
@@ -224,8 +295,12 @@ onMount(() => {
   .group-name {
     font-weight: 500;
   }
-  .group-head .num {
+  .group-head .num,
+  .later {
     color: var(--color-text-muted);
+  }
+  .later {
+    margin-left: auto;
   }
   ul {
     margin: 0;

@@ -10,6 +10,8 @@ import {
   PURGE_DAYS,
   type SystemPoint,
 } from "../ipc/bindings";
+import { failedCall } from "../ipc/failed";
+import { autofocus } from "../ui/autofocus";
 import EmptyState from "../ui/EmptyState.svelte";
 
 const t = fr.backups;
@@ -44,8 +46,6 @@ const entries = $derived(
 );
 
 /** A command that threw instead of answering, read as a plain failure. */
-const failedCall = () => ({ status: "error", error: "failed" }) as const;
-
 /** The notice for an elevated call that did not go through. */
 function elevationNotice(error: ElevationFailure, failedText: string) {
   return {
@@ -123,11 +123,6 @@ async function openRestore() {
     notice = elevationNotice(result.error, t.openFailed);
   }
   openingRestore = false;
-}
-
-/** Moves keyboard focus to the safe choice when the confirmation opens. */
-function focus(node: HTMLElement) {
-  node.focus();
 }
 
 /** Seconds since the Unix epoch to the local "23/11/2026". */
@@ -241,7 +236,7 @@ onMount(() => {
           <div class="confirm" role="alertdialog" aria-label={t.purge}>
             <p>{t.confirmPurge(contents, formatSize(batch.sizeKib))}</p>
             <div class="buttons">
-              <button class="action" use:focus onclick={() => (confirming = null)}>
+              <button class="action" use:autofocus onclick={() => (confirming = null)}>
                 {t.cancel}
               </button>
               <button
@@ -267,9 +262,6 @@ onMount(() => {
   .notice {
     min-width: 0;
     white-space: normal;
-  }
-  .failed {
-    color: var(--color-danger);
   }
   .create {
     flex: none;
@@ -329,22 +321,9 @@ onMount(() => {
   .hidden {
     visibility: hidden;
   }
-  .buttons {
-    display: flex;
-    flex: none;
-    gap: var(--space-2);
-  }
   .confirm {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-4);
     margin-top: var(--space-3);
     padding-top: var(--space-3);
     border-top: 1px solid var(--separator);
-  }
-  .confirm p {
-    margin: 0;
-    color: var(--color-text-secondary);
   }
 </style>

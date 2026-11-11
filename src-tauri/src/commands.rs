@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::io::Write;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -13,7 +13,7 @@ use tauri::ipc::Channel;
 
 use crate::core::broker::{Client, Reply, Request, RestorePoint, SystemPoint};
 use crate::core::inventory::{self, Program};
-use crate::core::leftovers::{self, Found};
+use crate::core::leftovers::{self, Cleaned, Found, Pick};
 use crate::core::quarantine::{self, BatchAction, BatchFailure, BatchSummary};
 use crate::core::settings::{self, Settings};
 use crate::core::sizes::{self, ProgramSize};
@@ -261,6 +261,25 @@ pub async fn compute_sizes(on_sizes: Channel<Vec<ProgramSize>>) {
 /// The leftover scan running, if any: `cancel_leftovers` or the next scan stops it.
 static LEFTOVER_SCAN: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
 
+/// The last scan that answered, for `quarantine_leftovers` to read the picks from: the
+/// UI sends back places in it, never paths.
+static LAST_LEFTOVERS: Mutex<Option<Scanned>> = Mutex::new(None);
+static SCAN_SERIAL: AtomicU32 = AtomicU32::new(0);
+
+struct Scanned {
+    serial: u32,
+    /// The program's name, which names the quarantine batch.
+    label: String,
+    found: Found,
+}
+
+/// A scan's answer and its number, which `quarantine_leftovers` takes back.
+#[derive(Serialize, Type)]
+pub struct Scan {
+    pub serial: u32,
+    pub found: Found,
+}
+
 /// Why a leftover scan found nothing.
 #[derive(Debug, PartialEq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -276,12 +295,25 @@ pub enum LeftoverFailure {
 /// scan stops the one running.
 #[tauri::command]
 #[specta::specta]
-pub async fn scan_leftovers(id: String) -> Result<Found, LeftoverFailure> {
+pub async fn scan_leftovers(id: String) -> Result<Scan, LeftoverFailure> {
     let cancelled = start_leftover_scan();
     tauri::async_runtime::spawn_blocking(move || {
         let program = inventory::find(&id).ok_or(LeftoverFailure::NotFound)?;
         let all = inventory::scan();
-        leftovers::find(&program, &all, &cancelled).ok_or(LeftoverFailure::Cancelled)
+        let found =
+            leftovers::find(&program, &all, &cancelled).ok_or(LeftoverFailure::Cancelled)?;
+        let mut last = last_leftovers();
+        // Replaced by a newer scan while finishing: that one's list is the one shown.
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(LeftoverFailure::Cancelled);
+        }
+        let serial = SCAN_SERIAL.fetch_add(1, Ordering::Relaxed) + 1;
+        *last = Some(Scanned {
+            serial,
+            label: program.name,
+            found: found.clone(),
+        });
+        Ok(Scan { serial, found })
     })
     .await
     .unwrap_or(Err(LeftoverFailure::Failed))
@@ -294,6 +326,45 @@ pub fn cancel_leftovers() {
     if let Some(scan) = leftover_scan().take() {
         scan.store(true, Ordering::Relaxed);
     }
+}
+
+/// Why picked leftovers were not moved.
+#[derive(Debug, PartialEq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum CleanFailure {
+    /// `serial` is not the last scan's, or its items were already sent: scan again.
+    Stale,
+    /// The quarantine folder could not be created or written.
+    Failed,
+}
+
+/// Moves the `picks` of the scan `serial` into a new quarantine batch (F5, ADR 0003),
+/// off the async runtime. Once per scan: the UI scans again to show what is left.
+#[tauri::command]
+#[specta::specta]
+pub async fn quarantine_leftovers(serial: u32, picks: Vec<Pick>) -> Result<Cleaned, CleanFailure> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let scanned = take_scan(serial).ok_or(CleanFailure::Stale)?;
+        let root = quarantine::root().ok_or(CleanFailure::Failed)?;
+        leftovers::clean(&scanned.found, &picks, &root, &scanned.label)
+            .map_err(|_| CleanFailure::Failed)
+    })
+    .await
+    .unwrap_or(Err(CleanFailure::Failed))
+}
+
+/// The last scan, taken out, if it is the scan `serial`.
+fn take_scan(serial: u32) -> Option<Scanned> {
+    let mut last = last_leftovers();
+    last.as_ref()
+        .is_some_and(|s| s.serial == serial)
+        .then(|| last.take())?
+}
+
+fn last_leftovers() -> std::sync::MutexGuard<'static, Option<Scanned>> {
+    LAST_LEFTOVERS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
 }
 
 /// A fresh cancel flag for a new scan, the previous scan's flag raised.
@@ -387,5 +458,24 @@ mod tests {
         cancel_leftovers();
         assert!(second.load(Ordering::Relaxed));
         assert!(leftover_scan().is_none());
+    }
+
+    #[test]
+    fn picks_are_taken_once_from_the_last_scan_only() {
+        let found = || Found {
+            folders: Vec::new(),
+            shortcuts: Vec::new(),
+            keys: Vec::new(),
+            services: Vec::new(),
+            tasks: Vec::new(),
+        };
+        *last_leftovers() = Some(Scanned {
+            serial: 7,
+            label: "Widget".into(),
+            found: found(),
+        });
+        assert!(take_scan(6).is_none());
+        assert!(take_scan(7).is_some());
+        assert!(take_scan(7).is_none());
     }
 }
