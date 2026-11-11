@@ -49,10 +49,10 @@ pub enum Request {
     ListRestorePoints,
     /// Opens Windows' System Restore wizard, where the user picks a point.
     OpenSystemRestore,
-    /// Moves the leftovers of `program` (an inventory id) that the app was denied. The
-    /// broker scans the program again and takes only the `held` items it finds too.
+    /// Moves the leftovers of `program` that the app was denied. The broker scans the
+    /// program again and takes only the `held` items it finds too.
     Leftovers {
-        program: String,
+        program: Whose,
         /// The first pass's batch, which these items join while it takes items.
         batch: Option<String>,
         held: Vec<Held>,
@@ -61,6 +61,16 @@ pub enum Request {
     /// its uninstaller removes the entry: `Leftovers` still finds it afterwards. Never
     /// a program description from the app.
     Remember { program: String },
+}
+
+/// Whose leftovers the broker scans again.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Whose {
+    /// An inventory id, remembered or still listed.
+    Listed(String),
+    /// A program no entry lists, as the user named it (F6, ADR 0002): the broker checks
+    /// it again as the app did, and the folder is only where its own scan also looks.
+    Unlisted { name: String, folder: String },
 }
 
 /// The broker's answer to one `Request`.
@@ -242,11 +252,15 @@ fn remember(id: &str) -> bool {
         .is_some()
 }
 
-/// Scans the program `id` again, elevated, and moves the `held` items it lists too
-/// into `batch`.
-fn clean_held(id: &str, batch: Option<&str>, held: &[Held]) -> Option<Cleaned> {
-    let program = REMEMBERED.find(id)?;
-    let found = leftovers::find(&program, &inventory::scan(), &AtomicBool::new(false))?;
+/// Scans the program again, elevated, and moves the `held` items it lists too into
+/// `batch`.
+fn clean_held(whose: &Whose, batch: Option<&str>, held: &[Held]) -> Option<Cleaned> {
+    let all = inventory::scan();
+    let program = match whose {
+        Whose::Listed(id) => REMEMBERED.find(id)?,
+        Whose::Unlisted { name, folder } => leftovers::unlisted(name, folder, &all).ok()?,
+    };
+    let found = leftovers::find(&program, &all, &AtomicBool::new(false))?;
     let root = quarantine::secure_admin_root()?;
     leftovers::clean_held(&found, held, &root, batch, &program.name).ok()
 }
@@ -468,7 +482,10 @@ mod tests {
             .chain((0..100).map(|i| Held::Service(format!("VendorUpdate{i}"))))
             .collect();
         let request = Request::Leftovers {
-            program: "id".into(),
+            program: Whose::Unlisted {
+                name: "Widget".into(),
+                folder: r"C:\Program Files\Widget".into(),
+            },
             batch: Some("Widget".into()),
             held,
         };
@@ -516,6 +533,33 @@ mod tests {
             Reply::Remembered(false)
         );
         assert!(REMEMBERED.find("unknown").is_none());
+    }
+
+    #[test]
+    fn an_unlisted_program_is_checked_again() {
+        let held = |whose| {
+            clean_held(
+                &whose,
+                None,
+                &[Held::Key(r"HKEY_LOCAL_MACHINE\SOFTWARE".into())],
+            )
+        };
+        let windows = std::env::var("SystemRoot").unwrap();
+        assert_eq!(
+            held(Whose::Unlisted {
+                name: "Widget".into(),
+                folder: windows
+            }),
+            None
+        );
+        assert_eq!(
+            held(Whose::Unlisted {
+                name: "Wi".into(),
+                folder: String::new()
+            }),
+            None
+        );
+        assert_eq!(held(Whose::Listed("unknown".into())), None);
     }
 
     #[test]

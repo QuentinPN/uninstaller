@@ -3,7 +3,7 @@
 //! entries. Every operation that walks or removes a program's files or keys asks here
 //! first (SECURITY.md).
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path, PathBuf, Prefix};
 
 use crate::core::registry::paths::UNINSTALL;
 use crate::win::registry::Hive;
@@ -45,10 +45,17 @@ const WINDOWS_DATA: [&str; 5] = [
 
 /// True for a drive root, `%SystemRoot%` or anything under it, a shared folder, the
 /// folder holding the user profiles or any account's profile, or a path that is not
-/// absolute or goes through `..` (it could climb out of anything checked here).
+/// absolute or goes through `..` (it could climb out of anything checked here). Only
+/// drive-letter paths are ever allowed: a `\\?\` path skips the checks below by its
+/// spelling, a network share is no program's.
 pub fn is_protected(path: &Path) -> bool {
     let path = normalize(path);
-    if !path.is_absolute()
+    let on_a_drive = matches!(
+        path.components().next(),
+        Some(Component::Prefix(p)) if matches!(p.kind(), Prefix::Disk(_))
+    );
+    if !on_a_drive
+        || !path.is_absolute()
         || path.parent().is_none()
         || path.components().any(|c| c == Component::ParentDir)
     {
@@ -219,6 +226,11 @@ mod tests {
                 .to_string_lossy()
                 .into_owned(),
             format!(r"{}\..\..\Windows", env("ProgramFiles")),
+            format!(r"\\?\{}", env("SystemRoot")),
+            format!(r"\\?\{}\7-Zip", env("ProgramFiles")),
+            r"\\server\share\App".to_owned(),
+            r"\\.\C:\App".to_owned(),
+            r"\App".to_owned(),
         ] {
             assert!(is_protected(Path::new(&path)), "{path}");
         }

@@ -366,13 +366,11 @@ export const fr = {
       tooShort: "Saisissez un nom d'au moins trois lettres, ou un dossier.",
       noFolder: "Ce dossier n'existe pas sur ce PC.",
       protected: "C'est un dossier système : il n'est jamais parcouru.",
+      link: "C'est un lien vers un autre dossier : saisissez ce dossier lui-même.",
       listed:
         "Ce programme figure dans la liste : désinstallez-le depuis celle-ci.",
       failed: "La liste des programmes n'a pas pu être lue. Réessayez.",
     },
-    /** On its leftovers screen, instead of the administrator pass. */
-    heldHint:
-      "La passe administrateur ne prend pas encore les restes d'un programme non listé.",
   },
   /** Screens not built yet: what will be there, and when. */
   upcoming: {

@@ -145,6 +145,8 @@ pub enum ForceFailure {
     NoFolder,
     /// The folder typed is a system one, never searched.
     Protected,
+    /// The folder typed is a link to another: the folder itself is asked for.
+    Link,
     /// An installed program has this name: its own uninstall applies.
     Listed,
     /// The installed programs could not be read.
@@ -162,6 +164,9 @@ pub fn unlisted(name: &str, folder: &str, all: &[Program]) -> Result<Program, Fo
         }
         if !folder.is_dir() {
             return Err(ForceFailure::NoFolder);
+        }
+        if !real_folder(folder) {
+            return Err(ForceFailure::Link);
         }
     }
     let name = match name.trim() {

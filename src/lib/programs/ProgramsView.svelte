@@ -215,14 +215,11 @@ let leftoversOf = $state<Program | null>(null);
 let guided = $state(false);
 /** The sheet that names a program the list lacks, for a forced uninstall, is open. */
 let forcing = $state(false);
-/** The leftovers screen is for such a program. */
-let unlisted = $state(false);
 /** The programs of the open uninstall sheet: none when it is closed. */
 let uninstalling = $state<Program[]>([]);
 
 function closeLeftovers() {
   leftoversOf = null;
-  unlisted = false;
   if (guided) {
     guided = false;
     load();
@@ -258,7 +255,6 @@ function closeForce() {
 /** A program the list lacks: its leftovers, as for one whose uninstaller is gone. */
 function forceLeftovers(program: Program) {
   forcing = false;
-  unlisted = true;
   leftoversOf = program;
 }
 
@@ -280,7 +276,7 @@ onMount(load);
 <svelte:window onafterprint={() => (printing = null)} />
 
 {#if leftoversOf}
-  <LeftoversView program={leftoversOf} {guided} {unlisted} onback={closeLeftovers} />
+  <LeftoversView program={leftoversOf} {guided} onback={closeLeftovers} />
 {:else}
 <header class="page-head">
   <h1>{fr.nav.programs}</h1>

@@ -30,12 +30,10 @@ interface Props {
   program: Program;
   /** Steps 3 and 4 of a guided uninstall: the steps are shown. */
   guided?: boolean;
-  /** A program the list lacks (F6): the broker cannot take its held items yet. */
-  unlisted?: boolean;
   onback: () => void;
 }
 
-let { program, guided = false, unlisted = false, onback }: Props = $props();
+let { program, guided = false, onback }: Props = $props();
 
 const t = fr.leftovers;
 const TAB_KEYS = Object.keys(TABS) as Tab[];
@@ -168,11 +166,7 @@ onMount(() => {
     </p>
   {/if}
   {#if held && !cleaning}
-    {#if unlisted}
-      <p class="summary">{fr.unlisted.heldHint}</p>
-    {:else}
-      <button class="action elevate" onclick={elevate}>{t.elevate}</button>
-    {/if}
+    <button class="action elevate" onclick={elevate}>{t.elevate}</button>
   {/if}
 </header>
 

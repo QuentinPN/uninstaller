@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tauri::ipc::Channel;
 
-use crate::core::broker::{Client, Reply, Request, RestorePoint, SystemPoint};
+use crate::core::broker::{Client, Reply, Request, RestorePoint, SystemPoint, Whose};
 use crate::core::inventory::{self, Kept, Program};
 use crate::core::leftovers::{self, Cleaned, ForceFailure, Found, Held, Pick};
 use crate::core::quarantine::{self, BatchAction, BatchFailure, BatchSummary};
@@ -460,12 +460,8 @@ pub async fn quarantine_leftovers(serial: u32, picks: Vec<Pick>) -> Result<Clean
 #[specta::specta]
 pub async fn quarantine_held_leftovers() -> Result<Cleaned, ElevationFailure> {
     let pending = held_leftovers().clone().ok_or(ElevationFailure::Failed)?;
-    // Its broker scan would find nothing: no UAC prompt for it.
-    if Program::is_unlisted(&pending.program) {
-        return Err(ElevationFailure::Failed);
-    }
     let request = Request::Leftovers {
-        program: pending.program.clone(),
+        program: whose(&pending.program).ok_or(ElevationFailure::Failed)?,
         batch: pending.batch.clone(),
         held: pending.held.clone(),
     };
@@ -480,6 +476,19 @@ pub async fn quarantine_held_leftovers() -> Result<Cleaned, ElevationFailure> {
         *held = None;
     }
     Ok(cleaned)
+}
+
+/// The program `id` as the broker is told it: its id, or, for one the user named,
+/// what the user typed.
+fn whose(id: &str) -> Option<Whose> {
+    if !Program::is_unlisted(id) {
+        return Some(Whose::Listed(id.to_owned()));
+    }
+    let program = UNINSTALLED.find(id)?;
+    Some(Whose::Unlisted {
+        name: program.name,
+        folder: program.install_location.unwrap_or_default(),
+    })
 }
 
 fn held_leftovers() -> std::sync::MutexGuard<'static, Option<Pending>> {

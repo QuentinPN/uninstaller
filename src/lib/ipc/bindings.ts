@@ -221,6 +221,8 @@ export type ForceFailure =
 "noFolder" | 
 /**  The folder typed is a system one, never searched. */
 "protected" | 
+/**  The folder typed is a link to another: the folder itself is asked for. */
+"link" | 
 /**  An installed program has this name: its own uninstall applies. */
 "listed" | 
 /**  The installed programs could not be read. */
