@@ -75,7 +75,41 @@ pub struct Program {
     pub orphan: bool,
 }
 
+/// The id tag of a program the user named for a forced uninstall: no entry has it.
+const UNLISTED_TAG: &str = "unlisted";
+
 impl Program {
+    /// Named by the user for a forced uninstall: the broker never knows it.
+    pub fn is_unlisted(id: &str) -> bool {
+        id.split_once('\\')
+            .is_some_and(|(tag, _)| tag == UNLISTED_TAG)
+    }
+
+    /// A program no entry lists, named for a forced uninstall (F6): only its name and
+    /// folder are known. It has no uninstaller, and `scope` says nothing.
+    pub fn unlisted(name: String, folder: Option<PathBuf>) -> Self {
+        Self {
+            id: format!(r"{UNLISTED_TAG}\{name}"),
+            name,
+            publisher: None,
+            version: None,
+            install_date: None,
+            estimated_size_kib: None,
+            install_location: folder.map(|f| f.to_string_lossy().into_owned()),
+            uninstall_string: None,
+            quiet_uninstall_string: None,
+            display_icon: None,
+            url: None,
+            comments: None,
+            msi: false,
+            registry_key: String::new(),
+            scope: Scope::User,
+            profile: None,
+            kind: Kind::App,
+            orphan: true,
+        }
+    }
+
     /// `InstallLocation` without the quotes some installers add, if it is a folder.
     pub fn install_folder(&self) -> Option<PathBuf> {
         self.declared_folder().filter(|f| f.is_dir())

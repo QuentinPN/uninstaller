@@ -25,6 +25,7 @@ fn ipc() -> Builder<tauri::Wry> {
             commands::open_system_restore,
             commands::compute_sizes,
             commands::scan_leftovers,
+            commands::force_unlisted,
             commands::cancel_leftovers,
             commands::quarantine_leftovers,
             commands::quarantine_held_leftovers,

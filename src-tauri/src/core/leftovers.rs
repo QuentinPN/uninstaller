@@ -135,6 +135,53 @@ pub struct Found {
     pub tasks: Vec<Named>,
 }
 
+/// Why a program typed in for a forced uninstall (F6) cannot be searched.
+#[derive(Debug, PartialEq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum ForceFailure {
+    /// The name, or the folder's when none is typed, is too short to match anything.
+    TooShort,
+    /// The folder typed is not a folder of this PC.
+    NoFolder,
+    /// The folder typed is a system one, never searched.
+    Protected,
+    /// An installed program has this name: its own uninstall applies.
+    Listed,
+    /// The installed programs could not be read.
+    Failed,
+}
+
+/// A program no entry lists, from the `name` and `folder` the user typed (either may
+/// be empty): the folder's name stands for a missing name.
+pub fn unlisted(name: &str, folder: &str, all: &[Program]) -> Result<Program, ForceFailure> {
+    let folder = folder.trim().trim_matches('"');
+    let folder = (!folder.is_empty()).then(|| PathBuf::from(folder));
+    if let Some(folder) = &folder {
+        if protect::is_protected(folder) {
+            return Err(ForceFailure::Protected);
+        }
+        if !folder.is_dir() {
+            return Err(ForceFailure::NoFolder);
+        }
+    }
+    let name = match name.trim() {
+        "" => folder
+            .as_deref()
+            .and_then(Path::file_name)
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        typed => typed.to_owned(),
+    };
+    let product = key(&name, &[]);
+    if product.len() < MIN_KEY {
+        return Err(ForceFailure::TooShort);
+    }
+    if all.iter().any(|p| key(&p.name, &[]) == product) {
+        return Err(ForceFailure::Listed);
+    }
+    Ok(Program::unlisted(name, folder))
+}
+
 /// Scans every kind of leftover of `program` among `all` the installed programs, read
 /// only. `None` once `cancelled` turns true, checked before each kind.
 pub fn find(program: &Program, all: &[Program], cancelled: &AtomicBool) -> Option<Found> {
@@ -929,6 +976,49 @@ mod tests {
                 "{refused}"
             );
         }
+    }
+
+    #[test]
+    fn an_unlisted_program_comes_from_its_name_or_folder() {
+        let folder = std::env::temp_dir().join("UninstallerUnlistedWidget");
+        fs::create_dir_all(&folder).unwrap();
+        let typed = folder.to_string_lossy().into_owned();
+        let listed = [inventory::tests::program("Acme Player 2.1", None)];
+
+        let named = unlisted(" Widget ", "", &listed).unwrap();
+        assert_eq!(
+            (named.id.as_str(), named.name.as_str()),
+            (r"unlisted\Widget", "Widget")
+        );
+        assert_eq!(named.install_location, None);
+        assert!(named.orphan && named.registry_key.is_empty());
+        assert!(Program::is_unlisted(&named.id) && !Program::is_unlisted(&listed[0].id));
+
+        let from_folder = unlisted("", &format!("\"{typed}\""), &listed).unwrap();
+        assert_eq!(from_folder.name, "UninstallerUnlistedWidget");
+        assert_eq!(from_folder.install_folder(), Some(folder.clone()));
+
+        let windows = std::env::var("SystemRoot").unwrap();
+        for (name, folder, failure) in [
+            ("", "", ForceFailure::TooShort),
+            ("Wi", "", ForceFailure::TooShort),
+            ("acme player", "", ForceFailure::Listed),
+            ("Widget", r"C:\", ForceFailure::Protected),
+            ("Widget", &windows, ForceFailure::Protected),
+            ("Widget", r"relative\path", ForceFailure::Protected),
+            (
+                "Widget",
+                &format!(r"{typed}\missing"),
+                ForceFailure::NoFolder,
+            ),
+        ] {
+            assert_eq!(
+                unlisted(name, folder, &listed).err(),
+                Some(failure),
+                "{name} {folder}"
+            );
+        }
+        fs::remove_dir(&folder).unwrap();
     }
 
     #[test]

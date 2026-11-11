@@ -158,7 +158,7 @@ $effect(() => {
 });
 </script>
 
-<dialog bind:this={dialog} {oncancel} aria-labelledby="uninstall-title">
+<dialog class="sheet" bind:this={dialog} {oncancel} aria-labelledby="uninstall-title">
   <h2 id="uninstall-title">{single ? t.title(first.name) : t.titleMany(programs.length)}</h2>
   {#if single && first.publisher}<p class="publisher">{first.publisher}</p>{/if}
   <Steps current={step} />
@@ -255,37 +255,6 @@ $effect(() => {
 </dialog>
 
 <style>
-  dialog {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-    width: min(var(--sheet-width), calc(100vw - 2 * var(--space-8)));
-    max-height: calc(100vh - 2 * var(--space-8));
-    padding: var(--space-6);
-    border: 1px solid var(--separator);
-    border-radius: var(--radius-lg);
-    background: var(--material-thick);
-    backdrop-filter: var(--material-blur);
-    color: var(--color-text);
-    animation: enter var(--motion-base) var(--ease-out);
-  }
-  dialog:not([open]) {
-    display: none;
-  }
-  dialog::backdrop {
-    background: var(--scrim);
-  }
-  @keyframes enter {
-    from {
-      opacity: 0;
-      transform: translateY(var(--space-6));
-    }
-  }
-  h2 {
-    margin: 0;
-    font-size: var(--font-size-body);
-    overflow-wrap: anywhere;
-  }
   .publisher {
     margin: calc(-1 * var(--space-3)) 0 0;
     color: var(--color-text-secondary);
@@ -300,13 +269,6 @@ $effect(() => {
   }
   .body p {
     margin: 0;
-  }
-  .hint {
-    color: var(--color-text-secondary);
-    font-size: var(--font-size-sm);
-  }
-  .failed {
-    color: var(--color-danger);
   }
   .queue {
     display: flex;
@@ -339,8 +301,5 @@ $effect(() => {
     align-items: center;
     gap: var(--space-2);
     color: var(--color-text-secondary);
-  }
-  .buttons {
-    justify-content: flex-end;
   }
 </style>

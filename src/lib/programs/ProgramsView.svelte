@@ -14,6 +14,7 @@ import LeftoversView from "../leftovers/LeftoversView.svelte";
 import EmptyState from "../ui/EmptyState.svelte";
 import { EMPTY_SELECTION, type Selection } from "../ui/listNav";
 import VirtualList from "../ui/VirtualList.svelte";
+import ForceSheet from "../uninstall/ForceSheet.svelte";
 import UninstallSheet from "../uninstall/UninstallSheet.svelte";
 import AppIcon from "./AppIcon.svelte";
 import {
@@ -212,11 +213,16 @@ function measure(current: number) {
 let leftoversOf = $state<Program | null>(null);
 /** The leftovers screen continues a guided uninstall (steps 3 and 4). */
 let guided = $state(false);
+/** The sheet that names a program the list lacks, for a forced uninstall, is open. */
+let forcing = $state(false);
+/** The leftovers screen is for such a program. */
+let unlisted = $state(false);
 /** The programs of the open uninstall sheet: none when it is closed. */
 let uninstalling = $state<Program[]>([]);
 
 function closeLeftovers() {
   leftoversOf = null;
+  unlisted = false;
   if (guided) {
     guided = false;
     load();
@@ -244,6 +250,18 @@ function uninstallLeftovers(program: Program) {
   if (uninstalling.length === 1) uninstalling = [];
 }
 
+function closeForce() {
+  forcing = false;
+  tick().then(() => list?.focus());
+}
+
+/** A program the list lacks: its leftovers, as for one whose uninstaller is gone. */
+function forceLeftovers(program: Program) {
+  forcing = false;
+  unlisted = true;
+  leftoversOf = program;
+}
+
 function closeDetails() {
   detailsOpen = false;
   list?.focus();
@@ -262,7 +280,7 @@ onMount(load);
 <svelte:window onafterprint={() => (printing = null)} />
 
 {#if leftoversOf}
-  <LeftoversView program={leftoversOf} {guided} onback={closeLeftovers} />
+  <LeftoversView program={leftoversOf} {guided} {unlisted} onback={closeLeftovers} />
 {:else}
 <header class="page-head">
   <h1>{fr.nav.programs}</h1>
@@ -288,7 +306,7 @@ onMount(load);
 
 <div class="toolbar">
   <input
-    class="search"
+    class="search field"
     type="search"
     placeholder={fr.programs.search}
     aria-label={fr.programs.searchHint}
@@ -363,6 +381,7 @@ onMount(load);
       {fr.programs.export.print}
     </button>
   </div>
+  <button class="menu-button" onclick={() => (forcing = true)}>{fr.unlisted.button}</button>
   <div class="toggles push" role="group" aria-label={fr.programs.filter}>
     {#each FILTERS as filter (filter)}
       <button
@@ -494,6 +513,9 @@ onMount(load);
 {/if}
 </div>
 {/if}
+{#if forcing}
+  <ForceSheet onclose={closeForce} onleftovers={forceLeftovers} />
+{/if}
 {#if uninstalling.length}
   <UninstallSheet programs={uninstalling} hidden={leftoversOf !== null}
     onclose={closeUninstall}
@@ -528,10 +550,6 @@ onMount(load);
     flex: 1;
     min-width: 20ch;
     max-width: 44ch;
-    padding: var(--space-2) var(--space-4);
-    border: none;
-    border-radius: var(--radius-pill);
-    background: var(--fill-glass);
   }
   .search::placeholder {
     color: var(--color-text-muted);

@@ -206,6 +206,57 @@ h1 {
   gap: var(--space-2);
 }
 
+/* A modal sheet over the screen: its title, its body, then its buttons. */
+.sheet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: min(var(--sheet-width), calc(100vw - 2 * var(--space-8)));
+  max-height: calc(100vh - 2 * var(--space-8));
+  padding: var(--space-6);
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-lg);
+  background: var(--material-thick);
+  backdrop-filter: var(--material-blur);
+  color: var(--color-text);
+  animation: sheet-enter var(--motion-base) var(--ease-out);
+}
+.sheet:not([open]) {
+  display: none;
+}
+.sheet::backdrop {
+  background: var(--scrim);
+}
+@keyframes sheet-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-6));
+  }
+}
+.sheet h2 {
+  margin: 0;
+  font-size: var(--font-size-body);
+  overflow-wrap: anywhere;
+}
+.sheet .hint {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+.sheet .failed {
+  color: var(--color-danger);
+}
+.sheet .buttons {
+  justify-content: flex-end;
+}
+
+/* A text field: a glass pill, as the search field. */
+.field {
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--fill-glass);
+}
+
 /* A screen's title line: the title, then its counts and notices. */
 .page-head {
   display: flex;

@@ -62,6 +62,11 @@ export const commands = {
 	 *  running.
 	 */
 	scanLeftovers: (id: string) => typedError<Scan, LeftoverFailure>(__TAURI_INVOKE("scan_leftovers", { id })),
+	/**
+	 *  A program no entry lists, from the name or folder the user typed (F6): kept like
+	 *  an uninstalled one, so `scan_leftovers` searches its leftovers.
+	 */
+	forceUnlisted: (name: string, folder: string) => typedError<Program_Serialize, ForceFailure>(__TAURI_INVOKE("force_unlisted", { name, folder })),
 	/**  Stops the leftover scan running; its `scan_leftovers` answers `Cancelled`. */
 	cancelLeftovers: () => __TAURI_INVOKE<void>("cancel_leftovers"),
 	/**
@@ -207,6 +212,19 @@ export type Export = {
 
 /**  File types of a list export (F19). */
 export type ExportFormat = "html" | "csv" | "txt";
+
+/**  Why a program typed in for a forced uninstall (F6) cannot be searched. */
+export type ForceFailure = 
+/**  The name, or the folder's when none is typed, is too short to match anything. */
+"tooShort" | 
+/**  The folder typed is not a folder of this PC. */
+"noFolder" | 
+/**  The folder typed is a system one, never searched. */
+"protected" | 
+/**  An installed program has this name: its own uninstall applies. */
+"listed" | 
+/**  The installed programs could not be read. */
+"failed";
 
 /**  Everything a program may have left, by kind, each list surest first. */
 export type Found = {

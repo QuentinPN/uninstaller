@@ -349,6 +349,31 @@ export const fr = {
       failed: "Windows n'a pas pu lancer le désinstalleur.",
     },
   },
+  /** Forced uninstall of a program the list lacks (F6). */
+  unlisted: {
+    button: "Programme non listé…",
+    title: "Forcer la désinstallation d'un programme non listé",
+    intro:
+      "Ses restes sont recherchés d'après son nom ou son dossier d'installation. Ce que vous retirez part en quarantaine.",
+    name: "Nom du programme",
+    folder: "Dossier d'installation, facultatif",
+    folderPlaceholder: String.raw`C:\Program Files\Programme`,
+    cancel: "Annuler",
+    search: "Rechercher les restes",
+    checking: "Vérification…",
+    /** By `ForceFailure`. */
+    failure: {
+      tooShort: "Saisissez un nom d'au moins trois lettres, ou un dossier.",
+      noFolder: "Ce dossier n'existe pas sur ce PC.",
+      protected: "C'est un dossier système : il n'est jamais parcouru.",
+      listed:
+        "Ce programme figure dans la liste : désinstallez-le depuis celle-ci.",
+      failed: "La liste des programmes n'a pas pu être lue. Réessayez.",
+    },
+    /** On its leftovers screen, instead of the administrator pass. */
+    heldHint:
+      "La passe administrateur ne prend pas encore les restes d'un programme non listé.",
+  },
   /** Screens not built yet: what will be there, and when. */
   upcoming: {
     title: "Pas encore là",

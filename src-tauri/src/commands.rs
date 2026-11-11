@@ -14,7 +14,7 @@ use tauri::ipc::Channel;
 
 use crate::core::broker::{Client, Reply, Request, RestorePoint, SystemPoint};
 use crate::core::inventory::{self, Kept, Program};
-use crate::core::leftovers::{self, Cleaned, Found, Held, Pick};
+use crate::core::leftovers::{self, Cleaned, ForceFailure, Found, Held, Pick};
 use crate::core::quarantine::{self, BatchAction, BatchFailure, BatchSummary};
 use crate::core::settings::{self, Settings};
 use crate::core::sizes::{self, ProgramSize};
@@ -371,6 +371,20 @@ pub async fn scan_leftovers(id: String) -> Result<Scan, LeftoverFailure> {
     .unwrap_or(Err(LeftoverFailure::Failed))
 }
 
+/// A program no entry lists, from the name or folder the user typed (F6): kept like
+/// an uninstalled one, so `scan_leftovers` searches its leftovers.
+#[tauri::command]
+#[specta::specta]
+pub async fn force_unlisted(name: String, folder: String) -> Result<Program, ForceFailure> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let program = leftovers::unlisted(&name, &folder, &inventory::scan())?;
+        UNINSTALLED.keep(program.clone());
+        Ok(program)
+    })
+    .await
+    .unwrap_or(Err(ForceFailure::Failed))
+}
+
 /// Stops the leftover scan running; its `scan_leftovers` answers `Cancelled`.
 #[tauri::command]
 #[specta::specta]
@@ -446,6 +460,10 @@ pub async fn quarantine_leftovers(serial: u32, picks: Vec<Pick>) -> Result<Clean
 #[specta::specta]
 pub async fn quarantine_held_leftovers() -> Result<Cleaned, ElevationFailure> {
     let pending = held_leftovers().clone().ok_or(ElevationFailure::Failed)?;
+    // Its broker scan would find nothing: no UAC prompt for it.
+    if Program::is_unlisted(&pending.program) {
+        return Err(ElevationFailure::Failed);
+    }
     let request = Request::Leftovers {
         program: pending.program.clone(),
         batch: pending.batch.clone(),
