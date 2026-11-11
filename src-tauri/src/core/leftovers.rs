@@ -246,15 +246,17 @@ pub fn clean(
             List::Tasks => found.tasks.get(index).map(|t| Item::Task(&t.name)),
         }
     });
-    quarantine_items(items, root, label)
+    quarantine_items(items, quarantine::create_for(root, label)?)
 }
 
 /// The elevated broker's half of `clean`: moves the `held` items that `found`, the
-/// broker's own scan, lists too; any other counts as failed.
+/// broker's own scan, lists too, into `batch`, the first half's, when it still takes
+/// items (else a new one named after `label`); any other counts as failed.
 pub fn clean_held(
     found: &Found,
     held: &[Held],
     root: &Path,
+    batch: Option<&str>,
     label: &str,
 ) -> Result<Cleaned, quarantine::Error> {
     let items = held.iter().map(|held| match held {
@@ -280,15 +282,15 @@ pub fn clean_held(
             .find(|named| &named.name == name)
             .map(|named| Item::Service(&named.name)),
     });
-    Ok(quarantine_items(items, root, label)?.0)
+    let batch = quarantine::reopen_or_create(root, batch, label)?;
+    Ok(quarantine_items(items, batch)?.0)
 }
 
-/// Moves `items` into a new batch, `None` ones counting as failed. Parents go before
-/// what they hold, which then counts as moved with them. An empty batch is removed.
+/// Moves `items` into `batch`, `None` ones counting as failed. Parents go before what
+/// they hold, which then counts as moved with them. A batch left empty is removed.
 fn quarantine_items<'a>(
     resolved: impl Iterator<Item = Option<Item<'a>>>,
-    root: &Path,
-    label: &str,
+    mut batch: quarantine::Batch,
 ) -> Result<(Cleaned, Vec<Held>), quarantine::Error> {
     let mut cleaned = Cleaned::default();
     let mut held = Vec::new();
@@ -303,7 +305,6 @@ fn quarantine_items<'a>(
     items.dedup();
     // Shallowest first: a parent goes before what it holds whatever the letter case.
     items.sort_by_key(Item::depth);
-    let mut batch = quarantine::create_for(root, label)?;
     let mut moved: Vec<Item> = Vec::new();
     for item in items {
         if moved.iter().any(|parent| item.inside(parent)) {
@@ -1211,20 +1212,24 @@ mod tests {
             registry::key_exists(Hive::CurrentUser, &format!(r"{path}\Sub"), View::Native64)
                 .unwrap()
         );
-        batch.purge().unwrap();
-        // The broker's half takes only what its own scan lists.
+        // The broker's half takes only what its own scan lists, into the same batch.
         let held = [
             Held::Path(dir.join("Widget")),
             Held::Key(key.clone()),
             Held::Path(dir.join("Other")),
             Held::Key(r"HKEY_CURRENT_USER\Software\Other".into()),
         ];
-        let cleaned = clean_held(&found, &held, &root, "Widget").unwrap();
+        let cleaned = clean_held(&found, &held, &root, cleaned.batch.as_deref(), "Widget").unwrap();
         assert_eq!((cleaned.moved, cleaned.failed), (2, 2));
+        assert_eq!(cleaned.batch.as_deref(), Some("Widget Pro"));
         assert!(!dir.join("Widget").exists() && dir.join("Widget.lnk").exists());
-        let mut batch = quarantine::Batch::open(&root.join("Widget")).unwrap();
+        let mut batch = quarantine::Batch::open(&root.join("Widget Pro")).unwrap();
+        assert_eq!(batch.items().len(), 5);
         batch.restore().unwrap();
         batch.purge().unwrap();
+        // A first batch gone meanwhile: a new one, removed again when nothing moves.
+        let gone = clean_held(&found, &held[2..], &root, Some("Widget Pro"), "Widget").unwrap();
+        assert_eq!((gone.batch, gone.failed), (None, 2));
         registry::test_key::clear(&path);
         // Nothing to move: no batch is left behind.
         let (none, _) = clean(&found, &[pick(List::Services, 0)], &root, "Widget").unwrap();

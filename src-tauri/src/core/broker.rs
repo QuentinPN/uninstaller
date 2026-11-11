@@ -47,7 +47,12 @@ pub enum Request {
     OpenSystemRestore,
     /// Moves the leftovers of `program` (an inventory id) that the app was denied. The
     /// broker scans the program again and takes only the `held` items it finds too.
-    Leftovers { program: String, held: Vec<Held> },
+    Leftovers {
+        program: String,
+        /// The first pass's batch, which these items join while it takes items.
+        batch: Option<String>,
+        held: Vec<Held>,
+    },
 }
 
 /// The broker's answer to one `Request`.
@@ -204,15 +209,20 @@ fn answer(request: Request) -> Reply {
         ),
         Request::ListRestorePoints => Reply::RestorePoints(restore_points()),
         Request::OpenSystemRestore => Reply::Opened(open_system_restore()),
-        Request::Leftovers { program, held } => Reply::Cleaned(clean_held(&program, &held)),
+        Request::Leftovers {
+            program,
+            batch,
+            held,
+        } => Reply::Cleaned(clean_held(&program, batch.as_deref(), &held)),
     }
 }
 
-/// Scans the program `id` again, elevated, and moves the `held` items it lists too.
-fn clean_held(id: &str, held: &[Held]) -> Option<Cleaned> {
+/// Scans the program `id` again, elevated, and moves the `held` items it lists too
+/// into `batch`.
+fn clean_held(id: &str, batch: Option<&str>, held: &[Held]) -> Option<Cleaned> {
     let program = inventory::find(id)?;
     let found = leftovers::find(&program, &inventory::scan(), &AtomicBool::new(false))?;
-    leftovers::clean_held(&found, held, &quarantine::root()?, &program.name).ok()
+    leftovers::clean_held(&found, held, &quarantine::root()?, batch, &program.name).ok()
 }
 
 /// The points WMI lists, newest first; a point whose date cannot be read is left out.
@@ -429,9 +439,11 @@ mod tests {
                 ))
             }))
             .chain((0..100).map(|i| Held::Task(format!(r"\Vendor\Update {i}"))))
+            .chain((0..100).map(|i| Held::Service(format!("VendorUpdate{i}"))))
             .collect();
         let request = Request::Leftovers {
             program: "id".into(),
+            batch: Some("Widget".into()),
             held,
         };
         let mut bytes = Vec::new();

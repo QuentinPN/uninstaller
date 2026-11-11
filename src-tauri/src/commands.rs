@@ -274,6 +274,8 @@ static HELD_LEFTOVERS: Mutex<Option<Pending>> = Mutex::new(None);
 struct Pending {
     /// The program's inventory id: the broker scans it again.
     program: String,
+    /// The batch the first pass filled, which the held items join.
+    batch: Option<String>,
     held: Vec<Held>,
 }
 
@@ -363,6 +365,7 @@ pub async fn quarantine_leftovers(serial: u32, picks: Vec<Pick>) -> Result<Clean
             .map_err(|_| CleanFailure::Failed)?;
         *held_leftovers() = (!held.is_empty()).then_some(Pending {
             program: scanned.program,
+            batch: cleaned.batch.clone(),
             held,
         });
         Ok(cleaned)
@@ -380,6 +383,7 @@ pub async fn quarantine_held_leftovers() -> Result<Cleaned, ElevationFailure> {
     let pending = held_leftovers().clone().ok_or(ElevationFailure::Failed)?;
     let request = Request::Leftovers {
         program: pending.program.clone(),
+        batch: pending.batch.clone(),
         held: pending.held.clone(),
     };
     let cleaned = ask_broker(request, |reply| match reply {

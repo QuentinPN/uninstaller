@@ -585,6 +585,15 @@ pub fn create_for(root: &Path, label: &str) -> Result<Batch, Error> {
     Err(io::Error::from(io::ErrorKind::AlreadyExists).into())
 }
 
+/// The batch `name` under `root` while it still takes items, else a new one named
+/// after `label`: the broker's pass of a cleanup joins the batch of the first pass.
+pub fn reopen_or_create(root: &Path, name: Option<&str>, label: &str) -> Result<Batch, Error> {
+    name.and_then(|name| batch_dir(root, name))
+        .and_then(|dir| Batch::open(&dir).ok())
+        .filter(|batch| batch.active().is_ok())
+        .map_or_else(|| create_for(root, label), Ok)
+}
+
 /// At startup: resumes every batch under `root`. A batch that cannot be read is left
 /// as it is, for the Backups screen to show; returns how many were resumed.
 pub fn resume_all(root: &Path) -> usize {
