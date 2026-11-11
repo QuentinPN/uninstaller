@@ -82,7 +82,7 @@ Côté broker, un tube créé par un autre processus que son parent donne le cod
 
 ### 2. Scan des restes
 
-Tranches 1 à 4 : `leftovers::Target::scan`, `shortcuts`, `keys` et `services` sont des fonctions pures de lecture (aucun état, aucune écriture) ; relancer est toujours sûr. Les états (en cours, annulé, terminé, choix, mise en quarantaine) arrivent avec l'écran.
+Tranches 1 à 5 : `leftovers::Target::scan`, `shortcuts`, `keys`, `services` et `tasks` sont des fonctions pures de lecture (aucun état, aucune écriture) ; relancer est toujours sûr. Les états (en cours, annulé, terminé, choix, mise en quarantaine) arrivent avec l'écran.
 
 ### 4. Session de suivi d'installation · 5. Mode Chasseur
 

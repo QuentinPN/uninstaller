@@ -138,6 +138,18 @@ pub fn is_protected_key(hive: Hive, path: &str) -> bool {
     })
 }
 
+/// True for the Task Scheduler's root folder, a malformed path (not starting with `\`,
+/// empty part), or anything under `\Microsoft\Windows`, where Windows keeps its own
+/// tasks.
+pub fn is_protected_task(path: &str) -> bool {
+    let path = path.to_lowercase();
+    let Some(path) = path.strip_prefix('\\') else {
+        return true;
+    };
+    let parts: Vec<&str> = path.split('\\').collect();
+    parts.iter().any(|part| part.is_empty()) || parts.starts_with(&["microsoft", "windows"])
+}
+
 /// Lowercase, `/` as `\`, no `.` and no trailing separator: Windows paths compare this way.
 pub fn normalize(path: &Path) -> PathBuf {
     let text = path.to_string_lossy().replace('/', "\\").to_lowercase();
@@ -150,6 +162,28 @@ pub fn normalize(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refuses_windows_own_tasks() {
+        for path in [
+            r"\",
+            "",
+            "Acme Update",
+            r"\Acme\\Update",
+            r"\Microsoft\Windows",
+            r"\microsoft\windows\Defrag\ScheduledDefrag",
+        ] {
+            assert!(is_protected_task(path), "{path}");
+        }
+        for path in [
+            r"\Acme Update",
+            r"\Acme\Update",
+            r"\Microsoft\Office\OfficeTelemetryAgentLogOn",
+            r"\MicrosoftEdgeUpdateTaskMachineCore",
+        ] {
+            assert!(!is_protected_task(path), "{path}");
+        }
+    }
 
     #[test]
     fn refuses_windows_data_folders() {

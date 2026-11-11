@@ -1,7 +1,8 @@
 //! Leftover scan (F5): the folders a removed program may leave in the shared roots
 //! (Program Files, ProgramData, AppData, Start Menus), its shortcuts and its registry
-//! keys under `SOFTWARE` and its services. Read only: it proposes, the quarantine moves. Every folder
-//! passes `protect::is_protected`, every key `protect::is_protected_key`; links and
+//! keys under `SOFTWARE`, its services and its scheduled tasks. Read only: it proposes,
+//! the quarantine moves. Every folder passes `protect::is_protected`, every key
+//! `protect::is_protected_key`, every task `protect::is_protected_task`; links and
 //! junctions are never listed nor followed.
 
 use std::fs;
@@ -11,7 +12,7 @@ use crate::core::inventory::{self, Program};
 use crate::core::protect;
 use crate::core::registry::paths;
 use crate::win::registry::{Hive, Key, View};
-use crate::win::shortcut;
+use crate::win::{icon, scheduler, shortcut};
 
 /// How surely a folder belongs to the program (SECURITY.md 5). Ordered from the
 /// surest: the Safe depth keeps `Safe`, Moderate adds `Moderate`, Advanced adds all.
@@ -32,8 +33,8 @@ pub struct Leftover {
     pub path: PathBuf,
 }
 
-/// A registry key as regedit shows it (`HKEY_CURRENT_USER\Software\Acme\Widget`) or a
-/// service's name; ordered surest first, then by name.
+/// A registry key as regedit shows it (`HKEY_CURRENT_USER\Software\Acme\Widget`), a
+/// service's name or a scheduled task's path; ordered surest first, then by name.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Named {
     pub confidence: Confidence,
@@ -211,46 +212,55 @@ impl Target {
     /// The services whose program file is in the install folder or gone, named after
     /// the program; surest first.
     pub fn services(&self, services: &[Service]) -> Vec<Named> {
-        if self.product.len() < MIN_KEY {
-            return Vec::new();
-        }
-        let found = services
-            .iter()
-            .filter_map(|service| {
-                let names: Vec<String> = std::iter::once(&service.name)
-                    .chain(&service.display)
-                    .map(|name| key(name, &[]))
-                    .collect();
-                Some(Named {
-                    confidence: self.rate_pointer(
-                        &service.binary,
-                        service.binary_exists,
-                        &names,
-                    )?,
-                    name: service.name.clone(),
-                })
+        self.rate_all(services, |service| {
+            let names: Vec<String> = std::iter::once(&service.name)
+                .chain(&service.display)
+                .map(|name| key(name, &[]))
+                .collect();
+            Some(Named {
+                confidence: self.rate_pointer(&service.binary, service.binary_exists, &names)?,
+                name: service.name.clone(),
             })
-            .collect();
-        sorted(found)
+        })
+    }
+
+    /// The scheduled tasks whose program is in the install folder or gone, named after
+    /// the program (the task or its folder); surest first.
+    pub fn tasks(&self, tasks: &[ScheduledTask]) -> Vec<Named> {
+        self.rate_all(tasks, |task| {
+            let names: Vec<String> = task
+                .path
+                .rsplit('\\')
+                .take(2)
+                .filter(|name| !name.is_empty())
+                .map(|name| key(name, &[]))
+                .collect();
+            Some(Named {
+                confidence: self.rate_pointer(&task.program, task.program_exists, &names)?,
+                name: task.path.clone(),
+            })
+        })
     }
 
     /// The shortcuts that lead to the program: into its install folder, or named after
     /// it with a target that is gone. A shortcut to a file that still exists elsewhere
     /// is someone else's.
     pub fn shortcuts(&self, shortcuts: &[Shortcut]) -> Vec<Leftover> {
+        self.rate_all(shortcuts, |shortcut| {
+            Some(Leftover {
+                confidence: self.rate_shortcut(shortcut)?,
+                path: shortcut.path.clone(),
+            })
+        })
+    }
+
+    /// What `rate` proposes among `items`, surest first; nothing for a product name too
+    /// short to tell.
+    fn rate_all<I, T: Ord>(&self, items: &[I], rate: impl Fn(&I) -> Option<T>) -> Vec<T> {
         if self.product.len() < MIN_KEY {
             return Vec::new();
         }
-        let found = shortcuts
-            .iter()
-            .filter_map(|shortcut| {
-                Some(Leftover {
-                    confidence: self.rate_shortcut(shortcut)?,
-                    path: shortcut.path.clone(),
-                })
-            })
-            .collect();
-        sorted(found)
+        sorted(items.iter().filter_map(rate).collect())
     }
 
     fn rate_shortcut(&self, shortcut: &Shortcut) -> Option<Confidence> {
@@ -405,6 +415,37 @@ pub fn services() -> Vec<Service> {
                 binary_exists: binary.is_file(),
                 binary: protect::normalize(&binary),
                 name,
+            })
+        })
+        .collect()
+}
+
+/// A scheduled task and the program its first "start a program" action runs, read once
+/// for every program rated against it.
+pub struct ScheduledTask {
+    /// As the Task Scheduler shows it: `\Folder\Name`.
+    path: String,
+    /// Normalized (`protect::normalize`).
+    program: PathBuf,
+    program_exists: bool,
+}
+
+/// The tasks outside Windows' own folder that start a program named by full path,
+/// outside the protected folders.
+pub fn scheduled_tasks() -> Vec<ScheduledTask> {
+    scheduler::tasks()
+        .into_iter()
+        .filter(|task| !protect::is_protected_task(&task.path))
+        .filter_map(|task| {
+            let program = icon::expand_env(task.programs.first()?);
+            let program = PathBuf::from(program.trim().trim_matches('"'));
+            if !program.is_absolute() || protect::is_protected(&program) {
+                return None;
+            }
+            Some(ScheduledTask {
+                program_exists: program.is_file(),
+                program: protect::normalize(&program),
+                path: task.path,
             })
         })
         .collect()
@@ -734,7 +775,10 @@ mod tests {
     #[test]
     fn real_programs_get_no_protected_folder() {
         let (roots, links) = (roots(), shortcuts(&shortcut_roots()));
-        let (software, services) = (paths::SOFTWARE_ROOTS, services());
+        let (software, services, tasks) = (paths::SOFTWARE_ROOTS, services(), scheduled_tasks());
+        assert!(tasks.iter().all(|task| {
+            !protect::is_protected_task(&task.path) && !protect::is_protected(&task.program)
+        }));
         let all = crate::core::inventory::scan();
         for program in &all {
             let target = Target::of(program, &all);
@@ -763,6 +807,10 @@ mod tests {
                     "{} · {:?} · service {service}",
                     program.name, leftover.confidence
                 );
+            }
+            for leftover in target.tasks(&tasks) {
+                let task = &leftover.name;
+                println!("{} · {:?} · task {task}", program.name, leftover.confidence);
             }
         }
     }
@@ -845,6 +893,42 @@ mod tests {
         };
         let target = Target::new("Widget Pro", None, None, vec![]);
         assert!(target.shortcuts(&[shortcut]).is_empty());
+    }
+
+    #[test]
+    fn rates_scheduled_tasks_by_their_program() {
+        let dir = std::env::temp_dir()
+            .join("uninstaller-tests")
+            .join(format!("tasks-{}", std::process::id()));
+        let install = dir.join("Widget Pro");
+        let task = |path: &str, program: PathBuf, exists| ScheduledTask {
+            path: path.to_owned(),
+            program: protect::normalize(&program),
+            program_exists: exists,
+        };
+        let tasks = [
+            task(r"\Widget Pro Update", install.join("up.exe"), true),
+            task(r"\Widget Pro\Daily", dir.join(r"gone\up.exe"), false),
+            task(r"\WidgetProTelemetry", dir.join(r"gone\t.exe"), false),
+            task(r"\Widget Pro Agent", dir.join(r"elsewhere\a.exe"), true),
+            task(r"\Unrelated", dir.join(r"gone\u.exe"), false),
+        ];
+        let target = Target::new("Widget Pro", None, Some(install), vec![]);
+
+        let found = target.tasks(&tasks);
+
+        let expected: Vec<_> = [
+            (r"\Widget Pro Update", Confidence::Moderate),
+            (r"\Widget Pro\Daily", Confidence::Moderate),
+            (r"\WidgetProTelemetry", Confidence::Advanced),
+        ]
+        .into_iter()
+        .map(|(name, confidence)| Named {
+            confidence,
+            name: name.to_owned(),
+        })
+        .collect();
+        assert_eq!(found, expected);
     }
 
     #[test]

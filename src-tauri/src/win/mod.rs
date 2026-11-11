@@ -7,5 +7,6 @@ pub mod pipe;
 pub mod process;
 pub mod registry;
 pub mod restore;
+pub mod scheduler;
 pub mod shortcut;
 pub mod token;
