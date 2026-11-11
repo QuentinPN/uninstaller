@@ -20,4 +20,4 @@
 
 ## Tests obligatoires
 
-Refus des chemins protégés ; aller-retour quarantaine → restauration identique (fichiers et `.reg`) ; reprise d'un lot interrompu ; aucun suivi de jonction ; désinstalleur introuvable → erreur claire, rien supprimé.
+Refus des chemins protégés ; aller-retour quarantaine → restauration identique (fichiers, `.reg` et tâches planifiées) ; reprise d'un lot interrompu ; aucun suivi de jonction ; désinstalleur introuvable → erreur claire, rien supprimé.

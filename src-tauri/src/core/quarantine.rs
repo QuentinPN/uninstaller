@@ -1,5 +1,6 @@
 //! Quarantine batches (ADR 0003, 0005): nothing is deleted, files and folders are moved
-//! into a batch folder and registry keys saved there as `.reg` before they go. The
+//! into a batch folder, registry keys saved there as `.reg` and scheduled tasks as
+//! their definition before they go. The
 //! manifest is written before each step, so a batch can be restored, or resumed after
 //! a crash.
 
@@ -18,6 +19,7 @@ use super::registry::reg_file;
 use super::sizes;
 use super::store;
 use crate::win::registry::{self, Hive, View};
+use crate::win::scheduler;
 
 const MANIFEST: &str = "manifest.json";
 /// Where moved items are kept, one entry per item, named by its index.
@@ -145,6 +147,9 @@ pub enum Kind {
     /// A registry key with its subkeys, kept as a `.reg` file. Its origin is the key as
     /// regedit names it, in the 64-bit view (32-bit keys go through `WOW6432Node`).
     Key,
+    /// A scheduled task, kept as its definition. Its origin is its path as Task
+    /// Scheduler shows it (`\Folder\Name`).
+    Task,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,7 +190,7 @@ pub struct BatchSummary {
     pub created: u32,
     /// When it is due to be purged (`created` + the purge delay setting).
     pub purge_on: u32,
-    /// Files, folders and links not restored.
+    /// Files, folders, links and scheduled tasks not restored.
     pub files: u32,
     /// Registry keys not restored.
     pub keys: u32,
@@ -331,17 +336,44 @@ impl Batch {
         // An HKLM key without elevation: refused here, not halfway through.
         registry::check_delete(hive, path, View::Native64)?;
         let saved = reg_file::export(hive, path, View::Native64).ok_or(Error::Unreadable)?;
-        let hash = hex(&Sha256::digest(&saved));
+        let index = self.save_copy(key, Kind::Key, &saved)?;
+        registry::delete_tree(hive, path, View::Native64)?;
+        self.set_state(index, State::Moved)
+    }
+
+    /// Saves the definition of the scheduled task at `path` (`\Folder\Name`) into the
+    /// batch, then removes the task, as `quarantine_key` does. A task Windows refuses to
+    /// remove stays in place and leaves the manifest again.
+    pub fn quarantine_task(&mut self, path: &str) -> Result<(), Error> {
+        self.active()?;
+        if protect::is_protected_task(path) {
+            return Err(Error::Protected);
+        }
+        let saved = scheduler::export(path)?;
+        let index = self.save_copy(path, Kind::Task, saved.as_bytes())?;
+        if let Err(error) = scheduler::delete(path) {
+            fs::remove_file(self.stored(index))?;
+            self.items.pop();
+            self.save()?;
+            return Err(error.into());
+        }
+        self.set_state(index, State::Moved)
+    }
+
+    /// Records `origin` as `Pending`, writes `saved` into the batch and checks it, then
+    /// marks it `Copied`, returning its index; on failure the item leaves the manifest.
+    fn save_copy(&mut self, origin: &str, kind: Kind, saved: &[u8]) -> Result<usize, Error> {
+        let hash = hex(&Sha256::digest(saved));
         let index = self.items.len();
         self.items.push(Item {
-            origin: PathBuf::from(key),
-            kind: Kind::Key,
+            origin: PathBuf::from(origin),
+            kind,
             hash: Some(hash.clone()),
             state: State::Pending,
         });
         self.save()?;
         let stored = self.stored(index);
-        let written = store::write_synced(&stored, &saved)
+        let written = store::write_synced(&stored, saved)
             .map_err(Error::from)
             .and_then(|()| {
                 if file_hash(&stored)? == hash {
@@ -357,8 +389,7 @@ impl Batch {
             return Err(error);
         }
         self.set_state(index, State::Copied)?;
-        registry::delete_tree(hive, path, View::Native64)?;
-        self.set_state(index, State::Moved)
+        Ok(index)
     }
 
     /// Puts every moved item back, last moved first. Stops at the first item that
@@ -382,6 +413,7 @@ impl Batch {
             }
             match item.kind {
                 Kind::Key => import_key(item, &stored)?,
+                Kind::Task => import_task(item, &stored)?,
                 _ => put_back(&stored, &item.origin)?,
             }
             self.set_state(index, State::Restored)?;
@@ -587,12 +619,21 @@ fn origin_key(item: &Item) -> Result<(Hive, &str), Error> {
         .ok_or(Error::Corrupt)
 }
 
+/// A task item's origin; a manifest naming none Task Scheduler would accept is corrupt.
+fn origin_task(item: &Item) -> Result<&str, Error> {
+    item.origin
+        .to_str()
+        .filter(|path| !protect::is_protected_task(path))
+        .ok_or(Error::Corrupt)
+}
+
 fn origin_exists(item: &Item) -> Result<bool, Error> {
     Ok(match item.kind {
         Kind::Key => {
             let (hive, path) = origin_key(item)?;
             registry::key_exists(hive, path, View::Native64)?
         }
+        Kind::Task => scheduler::exists(origin_task(item)?)?,
         _ => fs::symlink_metadata(&item.origin).is_ok(),
     })
 }
@@ -603,6 +644,7 @@ fn remove_origin(item: &Item) -> Result<(), Error> {
             let (hive, path) = origin_key(item)?;
             registry::delete_tree(hive, path, View::Native64)?;
         }
+        Kind::Task => scheduler::delete(origin_task(item)?)?,
         _ => remove_tree(&item.origin)?,
     }
     Ok(())
@@ -643,6 +685,14 @@ fn import_key(item: &Item, stored: &Path) -> Result<(), Error> {
         let _ = registry::delete_tree(hive, path, View::Native64);
         return Err(error.into());
     }
+    fs::remove_file(stored)?;
+    Ok(())
+}
+
+/// Registers a task again from its saved definition.
+fn import_task(item: &Item, stored: &Path) -> Result<(), Error> {
+    let xml = String::from_utf8(fs::read(stored)?).map_err(|_| Error::Corrupt)?;
+    scheduler::register(origin_task(item)?, &xml)?;
     fs::remove_file(stored)?;
     Ok(())
 }
@@ -711,6 +761,43 @@ mod tests {
         fs::write(dir.join("app\\app.exe"), b"binary").unwrap();
         fs::write(dir.join("app\\data\\settings.ini"), b"[x]\ny=1").unwrap();
         dir
+    }
+
+    /// The one task tests may create (agreed with the user): disabled, no trigger,
+    /// for the current account, removed at the end.
+    #[test]
+    fn quarantines_and_restores_a_scheduled_task() {
+        const TASK: &str = r"\UninstallerTest";
+        const XML: &str = r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Principals><Principal id="Author"><LogonType>InteractiveToken</LogonType></Principal></Principals>
+  <Settings><Enabled>false</Enabled></Settings>
+  <Actions Context="Author"><Exec><Command>%SystemRoot%\System32\cmd.exe</Command><Arguments>/c exit</Arguments></Exec></Actions>
+</Task>"#;
+        let _ = scheduler::delete(TASK);
+        scheduler::register(TASK, XML).unwrap();
+        let dir = sandbox("task");
+        let mut batch = Batch::create(&dir.join("quarantine"), "task").unwrap();
+        assert!(matches!(
+            batch.quarantine_task(r"\Microsoft\Windows\Defrag\ScheduledDefrag"),
+            Err(Error::Protected)
+        ));
+        assert!(
+            batch
+                .quarantine_task(r"\UninstallerTest\Absent")
+                .is_err()
+        );
+        assert!(batch.items().is_empty());
+        batch.quarantine_task(TASK).unwrap();
+        assert!(!scheduler::exists(TASK).unwrap());
+        assert_eq!(batch.items()[0].kind, Kind::Task);
+        batch.restore().unwrap();
+        let restored = scheduler::export(TASK).unwrap();
+        scheduler::delete(TASK).unwrap();
+        assert!(restored.contains("<Enabled>false</Enabled>"));
+        assert!(!scheduler::exists(TASK).unwrap());
+        batch.purge().unwrap();
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

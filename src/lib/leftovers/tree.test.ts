@@ -68,18 +68,20 @@ describe("selection", () => {
 });
 
 describe("picks", () => {
-  it("sends lists and indexes, and leaves services and tasks out of the quarantine", () => {
+  it("sends lists and indexes, and leaves services out of the quarantine", () => {
     expect(picks(new Set(["folders:1", "keys:0"]))).toEqual([
       { list: "folders", index: 1 },
       { list: "keys", index: 0 },
     ]);
     expect(removable("keys")).toBe(true);
     expect(removable("services")).toBe(false);
-    expect(removable("tasks")).toBe(false);
+    expect(removable("tasks")).toBe(true);
     const services = {
       ...FOUND,
       services: [{ confidence: "safe" as const, name: "Acme" }],
+      tasks: [{ confidence: "safe" as const, name: "\\Acme Update" }],
     };
     expect(safeIds(services).has("services:0")).toBe(false);
+    expect(safeIds(services).has("tasks:0")).toBe(true);
   });
 });

@@ -10,11 +10,12 @@ export const TABS: Record<Tab, GroupKey[]> = {
   registry: ["keys", "services", "tasks"],
 };
 
-/** What the quarantine takes for now; services and tasks wait for elevation. */
+/** What the quarantine takes for now; services wait. */
 const REMOVABLE: ReadonlySet<GroupKey> = new Set<GroupKey>([
   "folders",
   "shortcuts",
   "keys",
+  "tasks",
 ]);
 
 export function removable(key: GroupKey): boolean {

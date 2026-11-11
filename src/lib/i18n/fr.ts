@@ -145,7 +145,7 @@ export const fr = {
     /** Opens Windows' own wizard, where the point is chosen and confirmed. */
     openRestore: "Restaurer…",
     openFailed: "La Restauration du système n'a pas pu s'ouvrir.",
-    /** What a batch still holds: "12 éléments · 3 clés" (files, folders and links are elements). */
+    /** What a batch still holds: "12 éléments · 3 clés" (files, folders, links and tasks are elements). */
     contents: (files: number, keys: number) => {
       const parts = [];
       if (files) parts.push(`${files} élément${files > 1 ? "s" : ""}`);
@@ -232,7 +232,7 @@ export const fr = {
     selected: (n: number) =>
       `${n} élément${n > 1 ? "s" : ""} sélectionné${n > 1 ? "s" : ""}`,
     tabEmpty: "Rien dans cet onglet.",
-    /** Services and tasks: listed, not yet removable. */
+    /** Services: listed, not yet removable. */
     later: "Retrait pas encore pris en charge",
     quarantine: "Mettre en quarantaine",
     confirm: (n: number) =>

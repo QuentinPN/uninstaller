@@ -120,7 +120,7 @@ export type BatchSummary = {
 	created: number,
 	/**  When it is due to be purged (`created` + the purge delay setting). */
 	purgeOn: number,
-	/**  Files, folders and links not restored. */
+	/**  Files, folders, links and scheduled tasks not restored. */
 	files: number,
 	/**  Registry keys not restored. */
 	keys: number,
@@ -146,7 +146,7 @@ export type Cleaned_Deserialize = {
 	moved: number,
 	/**  Refused without elevation (Program Files, HKLM): left in place. */
 	needsAdmin: number,
-	/**  Protected, in use, gone meanwhile, or not handled yet (services, tasks). */
+	/**  Protected, in use, gone meanwhile, or not handled yet (services). */
 	failed: number,
 };
 
@@ -157,7 +157,7 @@ export type Cleaned_Serialize = {
 	moved: number,
 	/**  Refused without elevation (Program Files, HKLM): left in place. */
 	needsAdmin: number,
-	/**  Protected, in use, gone meanwhile, or not handled yet (services, tasks). */
+	/**  Protected, in use, gone meanwhile, or not handled yet (services). */
 	failed: number,
 };
 

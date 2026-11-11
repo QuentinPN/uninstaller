@@ -428,6 +428,7 @@ mod tests {
                     "Vendor ".repeat(12)
                 ))
             }))
+            .chain((0..100).map(|i| Held::Task(format!(r"\Vendor\Update {i}"))))
             .collect();
         let request = Request::Leftovers {
             program: "id".into(),

@@ -1,12 +1,15 @@
-//! Task Scheduler: the registered tasks and the programs they start, read only.
+//! Task Scheduler: the registered tasks and the programs they start; a task's
+//! definition saved, removed and registered again for the quarantine.
+
+use std::io;
 
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::System::TaskScheduler::{
     IExecAction, IRegisteredTask, ITaskFolder, ITaskService, TASK_ACTION_EXEC, TASK_ACTION_TYPE,
-    TASK_ENUM_HIDDEN, TaskScheduler,
+    TASK_CREATE, TASK_ENUM_HIDDEN, TASK_LOGON_PASSWORD, TASK_LOGON_TYPE, TaskScheduler,
 };
 use windows::Win32::System::Variant::VARIANT;
-use windows::core::{BSTR, Interface};
+use windows::core::{BSTR, Error, HRESULT, Interface};
 
 use crate::win::com;
 
@@ -20,21 +23,120 @@ pub struct Task {
 /// Every task the caller can see, hidden ones included; without administrator rights,
 /// other accounts' tasks may be missing or show no program.
 pub fn tasks() -> Vec<Task> {
-    com::prepare();
-    // SAFETY: COM is initialised on this thread.
-    let service: Option<ITaskService> =
-        unsafe { CoCreateInstance(&TaskScheduler, None, CLSCTX_INPROC_SERVER) }.ok();
-    let none = VARIANT::default();
     let mut tasks = Vec::new();
-    // SAFETY: empty variants mean this machine, as the caller; the BSTR outlives the call.
-    let root = service.and_then(|service| unsafe {
-        service.Connect(&none, &none, &none, &none).ok()?;
-        service.GetFolder(&BSTR::from(r"\")).ok()
-    });
-    if let Some(root) = root {
+    if let Ok((_, root)) = connect() {
         collect(&root, &mut tasks);
     }
     tasks
+}
+
+/// The definition of the task at `path` (`\Folder\Name`), as Task Scheduler writes
+/// it. A task that logs on with a stored password is refused (`Unsupported`): it could
+/// not be registered again without that password.
+pub fn export(path: &str) -> io::Result<String> {
+    let (_, root) = connect()?;
+    let mut logon = TASK_LOGON_TYPE::default();
+    // SAFETY: calls on live interfaces; the BSTR and the local outlive their calls.
+    let xml = unsafe {
+        root.GetTask(&BSTR::from(path)).and_then(|task| {
+            task.Definition()?.Principal()?.LogonType(&mut logon)?;
+            task.Xml()
+        })
+    }
+    .map_err(os)?;
+    if logon == TASK_LOGON_PASSWORD {
+        return Err(io::ErrorKind::Unsupported.into());
+    }
+    Ok(xml.to_string())
+}
+
+pub fn exists(path: &str) -> io::Result<bool> {
+    let (_, root) = connect()?;
+    // SAFETY: call on a live interface; the BSTR outlives it.
+    match unsafe { root.GetTask(&BSTR::from(path)) }.map_err(os) {
+        Ok(_) => Ok(true),
+        Err(missing) if missing.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// Removes the task at `path`: all or nothing; denied (`PermissionDenied`) for another
+/// account's task without administrator rights.
+pub fn delete(path: &str) -> io::Result<()> {
+    let (_, root) = connect()?;
+    let (folder, name) = path.rsplit_once('\\').ok_or(io::ErrorKind::InvalidInput)?;
+    // SAFETY: calls on live interfaces; the BSTRs outlive their calls.
+    unsafe {
+        match folder {
+            "" => Ok(root),
+            folder => root.GetFolder(&BSTR::from(folder)),
+        }
+        .and_then(|folder| folder.DeleteTask(&BSTR::from(name), 0))
+    }
+    .map_err(os)
+}
+
+/// Registers `xml`, from `export`, again at `path`, under the account and logon type
+/// it names; folders missing on the way are created.
+pub fn register(path: &str, xml: &str) -> io::Result<()> {
+    let (service, root) = connect()?;
+    let none = VARIANT::default();
+    // SAFETY: calls on live interfaces; the BSTRs, variants and locals outlive their calls.
+    let registered = unsafe {
+        let definition = service.NewTask(0)?;
+        definition.SetXmlText(&BSTR::from(xml))?;
+        let principal = definition.Principal()?;
+        let mut logon = TASK_LOGON_TYPE::default();
+        principal.LogonType(&mut logon)?;
+        let mut user = BSTR::new();
+        principal.UserId(&mut user)?;
+        let user = if user.is_empty() {
+            VARIANT::default()
+        } else {
+            VARIANT::from(user)
+        };
+        root.RegisterTaskDefinition(
+            &BSTR::from(path),
+            &definition,
+            TASK_CREATE.0,
+            &user,
+            &none,
+            logon,
+            &none,
+        )
+    };
+    registered.map(|_| ()).map_err(os)
+}
+
+/// Task Scheduler on this machine, as the caller, and its root folder.
+fn connect() -> io::Result<(ITaskService, ITaskFolder)> {
+    com::prepare();
+    let none = VARIANT::default();
+    // SAFETY: COM is initialised on this thread; empty variants mean this machine, as
+    // the caller; the BSTR outlives the call.
+    let connected = unsafe {
+        CoCreateInstance(&TaskScheduler, None, CLSCTX_INPROC_SERVER).and_then(
+            |service: ITaskService| {
+                service.Connect(&none, &none, &none, &none)?;
+                let root = service.GetFolder(&BSTR::from(r"\"))?;
+                Ok((service, root))
+            },
+        )
+    };
+    connected.map_err(os)
+}
+
+/// A Windows error as `io::Error`, with its own kind (`NotFound`, `PermissionDenied`)
+/// when the HRESULT wraps a Win32 code.
+fn os(error: Error) -> io::Error {
+    const WIN32: u32 = 0x8007_0000;
+    let HRESULT(code) = error.code();
+    let code = code.cast_unsigned();
+    if code & 0xFFFF_0000 == WIN32 {
+        io::Error::from_raw_os_error((code & 0xFFFF).cast_signed())
+    } else {
+        error.into()
+    }
 }
 
 /// The tasks of `folder` and of its subfolders, depth first.

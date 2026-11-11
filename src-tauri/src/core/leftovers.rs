@@ -173,7 +173,7 @@ pub struct Cleaned {
     pub moved: u32,
     /// Refused without elevation (Program Files, HKLM): left in place.
     pub needs_admin: u32,
-    /// Protected, in use, gone meanwhile, or not handled yet (services, tasks).
+    /// Protected, in use, gone meanwhile, or not handled yet (services).
     pub failed: u32,
 }
 
@@ -183,12 +183,15 @@ pub struct Cleaned {
 pub enum Held {
     Path(PathBuf),
     Key(String),
+    Task(String),
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 enum Item<'a> {
     Path(&'a Path),
     Key(&'a str),
+    /// A scheduled task's path (`\Folder\Name`): it holds nothing and nothing holds it.
+    Task(&'a str),
 }
 
 impl Item<'_> {
@@ -196,6 +199,7 @@ impl Item<'_> {
         match self {
             Item::Path(path) => Held::Path(path.to_path_buf()),
             Item::Key(key) => Held::Key((*key).to_owned()),
+            Item::Task(task) => Held::Task((*task).to_owned()),
         }
     }
 
@@ -203,6 +207,7 @@ impl Item<'_> {
         match self {
             Item::Path(path) => path.components().count(),
             Item::Key(key) => key.split('\\').count(),
+            Item::Task(_) => 0,
         }
     }
 
@@ -233,7 +238,8 @@ pub fn clean(
             List::Folders => found.folders.get(index).map(|f| Item::Path(&f.path)),
             List::Shortcuts => found.shortcuts.get(index).map(|s| Item::Path(&s.path)),
             List::Keys => found.keys.get(index).map(|k| Item::Key(&k.name)),
-            List::Services | List::Tasks => None,
+            List::Tasks => found.tasks.get(index).map(|t| Item::Task(&t.name)),
+            List::Services => None,
         }
     });
     quarantine_items(items, root, label)
@@ -259,6 +265,11 @@ pub fn clean_held(
             .iter()
             .find(|named| &named.name == key)
             .map(|named| Item::Key(&named.name)),
+        Held::Task(task) => found
+            .tasks
+            .iter()
+            .find(|named| &named.name == task)
+            .map(|named| Item::Task(&named.name)),
     });
     Ok(quarantine_items(items, root, label)?.0)
 }
@@ -293,6 +304,7 @@ fn quarantine_items<'a>(
         let done = match item {
             Item::Path(path) => batch.quarantine(path),
             Item::Key(key) => batch.quarantine_key(key),
+            Item::Task(task) => batch.quarantine_task(task),
         };
         match done {
             Ok(()) => {
@@ -1146,7 +1158,8 @@ mod tests {
             shortcuts: vec![left(dir.join("Widget.lnk"))],
             keys: vec![named(format!(r"{key}\SUB")), named(key.clone())],
             services: vec![named("WidgetSvc".into())],
-            tasks: Vec::new(),
+            // Not registered: Task Scheduler reports it missing.
+            tasks: vec![named(r"\UninstallerTest\Absent".into())],
         };
         let pick = |list, index| Pick { list, index };
         let picks = [
@@ -1158,6 +1171,7 @@ mod tests {
             pick(List::Keys, 0),
             pick(List::Keys, 1),
             pick(List::Services, 0),
+            pick(List::Tasks, 0),
         ];
         let root = dir.join("quarantine");
         let (cleaned, held) = clean(&found, &picks, &root, "Widget: Pro").unwrap();
@@ -1168,7 +1182,7 @@ mod tests {
                 batch: Some("Widget Pro".into()),
                 moved: 5,
                 needs_admin: 0,
-                failed: 3,
+                failed: 4,
             }
         );
         assert!(!dir.join("Widget").exists() && !dir.join("Widget.lnk").exists());
