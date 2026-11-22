@@ -1,0 +1,42 @@
+amends "package://github.com/jdx/hk/releases/download/v2.13.0/hk@2.13.0#/Config.pkl"
+
+// Mêmes commandes que la CI (release.yml : `npm run verify:web`) et que `npm run verify:rust`.
+// `node …/biome` plutôt que `npx` ou le shim .bin : même commande sous cmd.exe (Windows) et sh.
+// Le pre-commit corrige puis réindexe (fix = true) ; une erreur restante bloque le commit.
+hooks {
+  ["pre-commit"] {
+    fix = true
+    stash = "git"
+    steps {
+      ["biome"] {
+        glob = List("**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts,json,jsonc,css,svelte}")
+        check = "node node_modules/@biomejs/biome/bin/biome check --no-errors-on-unmatched --files-ignore-unknown=true {{files}}"
+        fix = "node node_modules/@biomejs/biome/bin/biome check --write --no-errors-on-unmatched --files-ignore-unknown=true {{files}}"
+      }
+      ["rustfmt"] {
+        glob = List("src-tauri/**/*.rs")
+        check = "rustfmt --edition 2024 --check {{files}}"
+        fix = "rustfmt --edition 2024 {{files}}"
+      }
+    }
+  }
+  // Web : le job release de la CI (`verify:web`), étape par étape pour les lancer en parallèle.
+  // Rust (hors CI, exigé par CLAUDE.md) : format et clippy, seulement quand des fichiers de src-tauri/ sont poussés.
+  // `cargo test` (environ 2 min 30 s, à chaud) reste à `npm run verify:rust`, comme `npm audit` et `cargo deny` (`verify:deps`).
+  ["pre-push"] {
+    steps {
+      ["lint"] { check = "npm run lint" }
+      ["svelte-check"] { check = "npm run check" }
+      ["tests"] { check = "npm run test" }
+      ["build"] { check = "npm run build" }
+      ["cargo-fmt"] {
+        dir = "src-tauri"
+        check = "cargo fmt --all -- --check"
+      }
+      ["clippy"] {
+        dir = "src-tauri"
+        check = "cargo clippy --all-targets -- -D warnings"
+      }
+    }
+  }
+}
